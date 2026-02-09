@@ -1,0 +1,1346 @@
+import { requireStaffRole, logoutStaff } from "./auth.js";
+import { parseCSV, qs, qsa, fmtDate, escapeHtml } from "./utils.js";
+import {
+  db,
+  storage,
+  serverTimestamp,
+  collection,
+  addDoc,
+  setDoc,
+  getDoc,
+  getDocs,
+  updateDoc,
+  deleteDoc,
+  doc,
+  query,
+  where,
+  ref,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from "./firebase.js";
+import { uploadFileToFirestore, fileHref } from "./fileStore.js";
+
+const state = {
+  me: null,
+  classes: [],
+  lectures: [],
+  quizzes: [],
+  quizDrafts: [],
+  assignments: [],
+  evalStats: [],
+  announcements: [],
+  quizQuestions: [],
+  activeQuestionIndex: 0,
+  draftTimer: null,
+  draftDirty: false,
+  lastDraftHash: "",
+  quizAttemptsReview: [],
+};
+
+function normalizeQuestion(raw = {}) {
+  const type = raw.type === "theory" ? "theory" : "mcq";
+  const parsedMarks = Number(raw.maxMarks);
+  const maxMarks = type === "mcq" ? 1 : (Number.isFinite(parsedMarks) && parsedMarks > 0 ? parsedMarks : 5);
+  return {
+    type,
+    promptHtml: raw.promptHtml || raw.text || "",
+    options: Array.isArray(raw.options) ? raw.options.slice(0, 4).concat(["", "", "", ""]).slice(0, 4) : ["", "", "", ""],
+    correctIndex: Number.isFinite(Number(raw.correctIndex)) ? Number(raw.correctIndex) : 0,
+    theoryAnswer: raw.theoryAnswer || "",
+    imageDataUrl: raw.imageDataUrl || "",
+    imageName: raw.imageName || "",
+    questionTimeSec: Number(raw.questionTimeSec || 0),
+    maxMarks,
+  };
+}
+
+function buildQuizPayload() {
+  return {
+    teacherId: state.me.uid,
+    classId: qs("#quizClassId").value,
+    quizNumber: Number(qs("#quizNumber").value),
+    title: qs("#quizTitle").value.trim(),
+    durationMin: Number(qs("#quizDuration").value || 1),
+    attemptLimit: Number(qs("#quizAttemptLimit").value || 1),
+    antiCheatEnabled: !!qs("#quizAntiCheat").checked,
+    questions: state.quizQuestions.map(normalizeQuestion),
+  };
+}
+
+function setDraftStatus(text) {
+  qs("#draftStatus").textContent = text;
+}
+
+function draftPayloadHash(payload) {
+  return JSON.stringify({
+    classId: payload.classId,
+    quizNumber: payload.quizNumber,
+    title: payload.title,
+    durationMin: payload.durationMin,
+    attemptLimit: payload.attemptLimit,
+    antiCheatEnabled: payload.antiCheatEnabled,
+    questions: payload.questions,
+  });
+}
+
+function markDraftDirty() {
+  state.draftDirty = true;
+  setDraftStatus("Draft has unsaved changes.");
+}
+
+function renderQuizBuilderStats() {
+  const total = state.quizQuestions.length;
+  const mcq = state.quizQuestions.filter((q) => q.type === "mcq").length;
+  const theory = total - mcq;
+  const active = total ? state.activeQuestionIndex + 1 : 0;
+  qs("#quizBuilderStats").innerHTML = `
+    <span class="chip chip-blue">Questions: ${total}</span>
+    <span class="chip chip-green">MCQ: ${mcq}</span>
+    <span class="chip chip-amber">Theory: ${theory}</span>
+    <span class="chip chip-slate">Editing: ${active}/${Math.max(total, 1)}</span>
+  `;
+}
+
+function setClassEnrollMsg(text) {
+  const el = qs("#classEnrollMsg");
+  if (el) el.textContent = text;
+}
+
+function fillClassSelects() {
+  const html = ['<option value="">Select class</option>']
+    .concat(state.classes.map((c) => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.semester)})</option>`))
+    .join("");
+  ["#enrollClassId", "#lectureClassId", "#quizClassId", "#assignmentClassId", "#announcementClassId", "#quizPreviewClass"].forEach((s) => {
+    const el = qs(s);
+    if (el) el.innerHTML = html;
+  });
+  const semesters = Array.from(new Set(state.classes.map((c) => c.semester))).filter(Boolean);
+  qs("#quizPreviewSemester").innerHTML = ['<option value="">Select semester</option>']
+    .concat(semesters.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`))
+    .join("");
+}
+
+async function refreshData() {
+  const [classSnap, lectureSnap, quizSnap, draftSnap, assignmentSnap, evalSnap, threadSnap] = await Promise.all([
+    getDocs(query(collection(db, "classes"), where("teacherId", "==", state.me.uid))),
+    getDocs(query(collection(db, "lectures"), where("teacherId", "==", state.me.uid))),
+    getDocs(query(collection(db, "quizzes"), where("teacherId", "==", state.me.uid))),
+    getDocs(query(collection(db, "quizDrafts"), where("teacherId", "==", state.me.uid))),
+    getDocs(query(collection(db, "assignments"), where("teacherId", "==", state.me.uid))),
+    getDocs(query(collection(db, "evaluationStats"), where("teacherId", "==", state.me.uid))),
+    getDocs(query(collection(db, "discussionThreads"), where("teacherId", "==", state.me.uid), where("isAnnouncement", "==", true))),
+  ]);
+
+  state.classes = classSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  state.lectures = lectureSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  state.quizzes = quizSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.quizNumber || 0) - (b.quizNumber || 0));
+  state.quizDrafts = draftSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0));
+  state.assignments = assignmentSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.assignmentNumber || 0) - (b.assignmentNumber || 0));
+  state.evalStats = evalSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  state.announcements = threadSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+
+  fillClassSelects();
+  renderClasses();
+  renderLectures();
+  renderQuizDrafts();
+  renderQuizzes();
+  renderQuizPreview();
+  await renderAssignments();
+  await renderEvaluationStats();
+  await renderQuizAttemptReviews();
+  renderAnnouncements();
+  wireDynamicEvents();
+}
+
+function renderQuizPreview() {
+  const classId = qs("#quizPreviewClass")?.value || "";
+  const semester = qs("#quizPreviewSemester")?.value || "";
+  const classIds = new Set(state.classes
+    .filter((c) => (!classId || c.id === classId) && (!semester || c.semester === semester))
+    .map((c) => c.id));
+
+  const drafts = state.quizDrafts.filter((d) => classIds.size === 0 || classIds.has(d.classId));
+  const archived = state.quizzes.filter((q) => q.status === "archived" && (classIds.size === 0 || classIds.has(q.classId)));
+
+  qs("#quizDraftPreview").innerHTML = drafts.map((d) => `<article class="item">
+    <h4>${escapeHtml(d.title || "Untitled")} (Quiz ${d.quizNumber})</h4>
+    <p class="meta">${escapeHtml(state.classes.find((c) => c.id === d.classId)?.name || d.classId)} | Questions: ${d.questions?.length || 0}</p>
+  </article>`).join("") || "<p>Select class and semester.</p>";
+
+  qs("#archivedQuizzesPreview").innerHTML = archived.map((q) => `<article class="item">
+    <h4>${escapeHtml(q.title)} (Quiz ${q.quizNumber})</h4>
+    <p class="meta">${escapeHtml(state.classes.find((c) => c.id === q.classId)?.name || q.classId)} | Archived</p>
+  </article>`).join("") || "<p>No archived quizzes for selected class/semester.</p>";
+}
+
+function renderClasses() {
+  qs("#classesList").innerHTML = state.classes
+    .map((c) => `<article class="item">
+      <h4>${escapeHtml(c.name)}</h4>
+      <p class="meta">${escapeHtml(c.semester)} | ${fmtDate(c.createdAt)}</p>
+      <div class="inline-actions">
+        <button data-del-class="${c.id}" type="button">Delete Class</button>
+      </div>
+    </article>`)
+    .join("") || "<p>No classes yet.</p>";
+}
+
+function renderLectures() {
+  qs("#lecturesList").innerHTML = state.lectures
+    .map((l) => {
+      const klass = state.classes.find((c) => c.id === l.classId);
+      const files = (l.files || []).map((f) => `<a href="${fileHref(f)}" target="_blank" rel="noopener">${escapeHtml(f.name)}</a>`).join(" | ");
+      return `<article class="item">
+        <h4>${escapeHtml(l.title)}</h4>
+        <p class="meta">${escapeHtml(klass?.name || l.classId)} | Date: ${escapeHtml(l.date)}</p>
+        <p>${files || "No files"}</p>
+        <p>${l.videoLink ? `<a href="${l.videoLink}" target="_blank" rel="noopener">Video Link</a>` : "No video link"}</p>
+        <div class="inline-actions">
+          <button data-edit-lecture="${l.id}" type="button">Edit</button>
+          <button data-del-lecture="${l.id}" type="button">Delete</button>
+        </div>
+      </article>`;
+    })
+    .join("") || "<p>No lectures yet.</p>";
+}
+
+function renderQuestionBuilder() {
+  renderQuizBuilderStats();
+  if (!state.quizQuestions.length) {
+    qs("#questionBuilder").innerHTML = "<p>No questions added yet.</p>";
+    return;
+  }
+  state.activeQuestionIndex = Math.max(0, Math.min(state.activeQuestionIndex, state.quizQuestions.length - 1));
+  const q = state.quizQuestions[state.activeQuestionIndex];
+  if (q.type === "mcq" && Number(q.maxMarks) !== 1) q.maxMarks = 1;
+  if (q.type === "theory" && (!Number.isFinite(Number(q.maxMarks)) || Number(q.maxMarks) < 1)) q.maxMarks = 5;
+  const rows = state.quizQuestions
+    .map((item, i) => `<div class="question-row ${i === state.activeQuestionIndex ? "active" : ""}">
+      <p><strong>Q${i + 1}</strong> <span class="q-type-pill">${item.type.toUpperCase()}</span></p>
+      <p class="meta">${escapeHtml((item.promptHtml || "").slice(0, 70) || "No prompt yet")}</p>
+      <p class="meta">Marks: ${item.type === "mcq" ? 1 : Number(item.maxMarks || 5)}</p>
+      <div class="inline-actions">
+        <button data-select-q="${i}" type="button">Edit</button>
+        <button data-up-q="${i}" type="button" ${i === 0 ? "disabled" : ""}>Up</button>
+        <button data-down-q="${i}" type="button" ${i === state.quizQuestions.length - 1 ? "disabled" : ""}>Down</button>
+        <button data-dup-q="${i}" type="button">Duplicate</button>
+        <button data-remove-q="${i}" type="button">Delete</button>
+      </div>
+    </div>`)
+    .join("");
+  const mcqOptions = q.options
+    .map((opt, oi) => `<label>Option ${oi + 1}<input data-current-opt="${oi}" value="${escapeHtml(opt)}" /></label>`)
+    .join("");
+
+  qs("#questionBuilder").innerHTML = `<div class="quiz-builder">
+    <div class="question-list">${rows}</div>
+    <div class="question-editor">
+      <div class="inline-actions">
+        <strong>Editing Q${state.activeQuestionIndex + 1}</strong>
+        <select id="currentQuestionType">
+          <option value="mcq" ${q.type === "mcq" ? "selected" : ""}>MCQ</option>
+          <option value="theory" ${q.type === "theory" ? "selected" : ""}>Theory</option>
+        </select>
+      </div>
+      <div class="toolbar">
+        <button data-current-wrap="b" type="button"><b>B</b></button>
+        <button data-current-wrap="i" type="button"><i>I</i></button>
+        <button data-current-wrap="code" type="button">Code</button>
+        <button data-current-wrap="latex" type="button">LaTeX</button>
+      </div>
+      <label>Prompt<textarea id="currentPrompt" rows="4">${escapeHtml(q.promptHtml || "")}</textarea></label>
+      <label>Image<input id="currentImage" type="file" accept="image/*" /></label>
+      ${q.imageDataUrl ? `<p><img src="${q.imageDataUrl}" alt="question image" style="max-width: 220px; border:1px solid #d9e0e6;" /></p>` : ""}
+      ${q.type === "mcq" ? `
+        ${mcqOptions}
+        <label>Correct Option Index (0-3)<input id="currentCorrectIndex" type="number" min="0" max="3" value="${q.correctIndex}" /></label>
+      ` : `
+        <label>Model Answer<textarea id="currentTheoryAnswer" rows="3">${escapeHtml(q.theoryAnswer || "")}</textarea></label>
+      `}
+      <label>Question Marks
+        <input id="currentQuestionMarks" type="number" min="1" step="1" value="${q.type === "mcq" ? 1 : Number(q.maxMarks || 5)}" ${q.type === "mcq" ? "disabled" : ""} />
+      </label>
+      <p class="meta">${q.type === "mcq" ? "MCQ marks are fixed to 1." : "Set marks for this short question."}</p>
+      <label>Question Timer (seconds, optional)<input id="currentQuestionTimer" type="number" min="0" value="${Number(q.questionTimeSec || 0)}" /></label>
+    </div>
+  </div>`;
+}
+
+function wrapTextArea(el, type) {
+  const start = el.selectionStart || 0;
+  const end = el.selectionEnd || 0;
+  const text = el.value;
+  const selected = text.slice(start, end) || "text";
+  const wrappers = {
+    b: ["<b>", "</b>"],
+    i: ["<i>", "</i>"],
+    code: ["<pre><code>", "</code></pre>"],
+    latex: ["$$", "$$"],
+  };
+  const [open, close] = wrappers[type] || ["", ""];
+  const next = `${text.slice(0, start)}${open}${selected}${close}${text.slice(end)}`;
+  el.value = next;
+}
+
+async function compressImageToDataUrl(file, maxWidth = 1200, quality = 0.72) {
+  const img = await new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = reject;
+    image.src = url;
+  });
+  const scale = Math.min(1, maxWidth / img.width);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+async function autosaveDraft() {
+  const payload = buildQuizPayload();
+  if (!payload.classId || !payload.quizNumber) {
+    setDraftStatus("Select class and quiz number to enable draft save.");
+    return false;
+  }
+  if (payload.questions.length === 0) {
+    setDraftStatus("Add at least one question to save draft.");
+    return false;
+  }
+  const nextHash = draftPayloadHash(payload);
+  if (!state.draftDirty && nextHash === state.lastDraftHash) return true;
+  setDraftStatus("Saving draft...");
+  const draftId = `${state.me.uid}_${payload.classId}_q${payload.quizNumber}`;
+  try {
+    await setDoc(doc(db, "quizDrafts", draftId), {
+      ...payload,
+      teacherId: state.me.uid,
+      status: "draft",
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    qs("#quizDraftId").value = draftId;
+    state.lastDraftHash = nextHash;
+    state.draftDirty = false;
+    setDraftStatus(`Draft saved at ${new Date().toLocaleTimeString()}`);
+    return true;
+  } catch (err) {
+    setDraftStatus(`Draft save failed: ${err.message || "permission/network error"}`);
+    throw err;
+  }
+}
+
+function scheduleDraftAutosave() {
+  clearTimeout(state.draftTimer);
+  markDraftDirty();
+  state.draftTimer = setTimeout(() => {
+    autosaveDraft().catch(() => {});
+  }, 1000);
+}
+
+function validateQuestions(questions, { strict = true } = {}) {
+  if (!questions.length) throw new Error("Add at least one question.");
+  if (!strict) return;
+  for (const q of questions) {
+    if (!String(q.promptHtml || "").trim()) throw new Error("Each question prompt is required.");
+    if (q.type === "mcq") {
+      if ((q.options || []).some((o) => !String(o || "").trim())) throw new Error("All MCQ options are required.");
+      if (q.correctIndex < 0 || q.correctIndex > 3) throw new Error("MCQ correct index must be 0-3.");
+      if (Number(q.maxMarks) !== 1) throw new Error("MCQ marks must remain 1.");
+    } else {
+      if (!Number.isFinite(Number(q.maxMarks)) || Number(q.maxMarks) < 1) throw new Error("Each short question must have marks >= 1.");
+    }
+  }
+}
+
+function wireQuestionBuilderInputs() {
+  qsa("[data-select-q]").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.activeQuestionIndex = Number(el.dataset.selectQ);
+      renderQuestionBuilder();
+      wireQuestionBuilderInputs();
+    });
+  });
+  qsa("[data-remove-q]").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.quizQuestions.splice(Number(el.dataset.removeQ), 1);
+      state.activeQuestionIndex = Math.max(0, state.activeQuestionIndex - 1);
+      renderQuestionBuilder();
+      wireQuestionBuilderInputs();
+      scheduleDraftAutosave();
+    });
+  });
+  qsa("[data-up-q]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const i = Number(el.dataset.upQ);
+      if (i <= 0) return;
+      const tmp = state.quizQuestions[i - 1];
+      state.quizQuestions[i - 1] = state.quizQuestions[i];
+      state.quizQuestions[i] = tmp;
+      state.activeQuestionIndex = i - 1;
+      renderQuestionBuilder();
+      wireQuestionBuilderInputs();
+      scheduleDraftAutosave();
+    });
+  });
+  qsa("[data-down-q]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const i = Number(el.dataset.downQ);
+      if (i >= state.quizQuestions.length - 1) return;
+      const tmp = state.quizQuestions[i + 1];
+      state.quizQuestions[i + 1] = state.quizQuestions[i];
+      state.quizQuestions[i] = tmp;
+      state.activeQuestionIndex = i + 1;
+      renderQuestionBuilder();
+      wireQuestionBuilderInputs();
+      scheduleDraftAutosave();
+    });
+  });
+  qsa("[data-dup-q]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const i = Number(el.dataset.dupQ);
+      const src = state.quizQuestions[i];
+      if (!src) return;
+      state.quizQuestions.splice(i + 1, 0, normalizeQuestion(JSON.parse(JSON.stringify(src))));
+      state.activeQuestionIndex = i + 1;
+      renderQuestionBuilder();
+      wireQuestionBuilderInputs();
+      scheduleDraftAutosave();
+    });
+  });
+
+  const current = state.quizQuestions[state.activeQuestionIndex];
+  if (!current) return;
+  qs("#currentQuestionType")?.addEventListener("change", (e) => {
+    current.type = e.target.value === "theory" ? "theory" : "mcq";
+    if (current.type === "mcq") current.maxMarks = 1;
+    if (current.type === "theory" && (!Number.isFinite(Number(current.maxMarks)) || Number(current.maxMarks) < 1)) current.maxMarks = 5;
+    renderQuestionBuilder();
+    wireQuestionBuilderInputs();
+    scheduleDraftAutosave();
+  });
+  qs("#currentPrompt")?.addEventListener("input", (e) => {
+    current.promptHtml = e.target.value;
+    scheduleDraftAutosave();
+  });
+  qsa("[data-current-wrap]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const textarea = qs("#currentPrompt");
+      wrapTextArea(textarea, btn.dataset.currentWrap);
+      textarea.dispatchEvent(new Event("input"));
+    });
+  });
+  qsa("[data-current-opt]").forEach((el) => {
+    el.addEventListener("input", (e) => {
+      current.options[Number(e.target.dataset.currentOpt)] = e.target.value;
+      scheduleDraftAutosave();
+    });
+  });
+  qs("#currentCorrectIndex")?.addEventListener("input", (e) => {
+    current.correctIndex = Number(e.target.value);
+    scheduleDraftAutosave();
+  });
+  qs("#currentTheoryAnswer")?.addEventListener("input", (e) => {
+    current.theoryAnswer = e.target.value;
+    scheduleDraftAutosave();
+  });
+  qs("#currentQuestionMarks")?.addEventListener("input", (e) => {
+    const n = Number(e.target.value || 0);
+    current.maxMarks = Number.isFinite(n) && n > 0 ? n : 1;
+    scheduleDraftAutosave();
+  });
+  qs("#currentQuestionTimer")?.addEventListener("input", (e) => {
+    current.questionTimeSec = Number(e.target.value || 0);
+    scheduleDraftAutosave();
+  });
+  qs("#currentImage")?.addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    current.imageName = file.name;
+    current.imageDataUrl = await compressImageToDataUrl(file);
+    renderQuestionBuilder();
+    wireQuestionBuilderInputs();
+    scheduleDraftAutosave();
+  });
+}
+
+function parsePastedQuestions(rawText) {
+  const blocks = String(rawText || "").split(/\n\s*\n/g).map((b) => b.trim()).filter(Boolean);
+  const out = [];
+  for (const block of blocks) {
+    const lines = block.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) continue;
+    const prompt = lines[0].replace(/^q[\).\s:-]*/i, "").trim();
+    if (!prompt) continue;
+    const options = ["", "", "", ""];
+    let answerRaw = "";
+    const theoryParts = [];
+    for (const line of lines.slice(1)) {
+      const optMatch = line.match(/^([A-Da-d])[)\].:\s-]+(.+)$/);
+      if (optMatch) {
+        const idx = optMatch[1].toUpperCase().charCodeAt(0) - 65;
+        options[idx] = optMatch[2].trim();
+        continue;
+      }
+      const ansMatch = line.match(/^answer[\s:-]+(.+)$/i);
+      if (ansMatch) {
+        answerRaw = ansMatch[1].trim();
+        continue;
+      }
+      theoryParts.push(line);
+    }
+    const isMcq = options.every((o) => o.trim());
+    if (isMcq) {
+      let correctIndex = 0;
+      if (/^[A-Da-d]$/.test(answerRaw)) {
+        correctIndex = answerRaw.toUpperCase().charCodeAt(0) - 65;
+      } else if (options.includes(answerRaw)) {
+        correctIndex = options.indexOf(answerRaw);
+      }
+      out.push(normalizeQuestion({ type: "mcq", promptHtml: prompt, options, correctIndex }));
+    } else {
+      out.push(normalizeQuestion({ type: "theory", promptHtml: prompt, theoryAnswer: theoryParts.join(" ") || answerRaw }));
+    }
+  }
+  return out;
+}
+
+function renderQuizDrafts() {
+  qs("#quizDraftsList").innerHTML = state.quizDrafts
+    .map((d) => {
+      const className = state.classes.find((c) => c.id === d.classId)?.name || d.classId;
+      return `<article class="item">
+        <h4>${escapeHtml(d.title || "Untitled")} (Quiz ${d.quizNumber})</h4>
+        <p class="meta">${escapeHtml(className)} | Updated ${fmtDate(d.updatedAt)} | ${d.questions?.length || 0} questions</p>
+        <div class="inline-actions">
+          <button data-edit-draft="${d.id}" type="button">Edit Draft</button>
+          <button data-publish-draft="${d.id}" type="button">Publish Draft</button>
+          <button data-del-draft="${d.id}" type="button">Delete Draft</button>
+        </div>
+      </article>`;
+    })
+    .join("") || "<p>No drafts yet.</p>";
+}
+
+async function renderQuizAnalytics() {
+  const snap = await getDocs(query(collection(db, "quizAnalytics"), where("teacherId", "==", state.me.uid)));
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  qs("#quizAnalyticsList").innerHTML = rows
+    .map((a) => {
+      const quiz = state.quizzes.find((q) => q.id === a.quizId);
+      const className = state.classes.find((c) => c.id === a.classId)?.name || a.classId;
+      const avg = a.attempts ? ((a.totalScore / a.attempts) * 100 / (a.totalGradable || 1)).toFixed(2) : "0.00";
+      const questionBreakdown = (a.questionStats || [])
+        .map((q, idx) => `Q${idx + 1}: ${q.correct}/${q.total}`)
+        .join(" | ");
+      return `<article class="item">
+        <h4>${escapeHtml(quiz?.title || a.quizId)}</h4>
+        <p class="meta">${escapeHtml(className)} | Attempts: ${a.attempts || 0} | Avg MCQ Score: ${avg}%</p>
+        <p>${escapeHtml(questionBreakdown)}</p>
+      </article>`;
+    })
+    .join("") || "<p>No analytics yet.</p>";
+}
+
+async function renderQuizAttemptReviews() {
+  const snap = await getDocs(query(collection(db, "quizAttempts"), where("teacherId", "==", state.me.uid)));
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (b.submittedAt?.seconds || 0) - (a.submittedAt?.seconds || 0));
+  state.quizAttemptsReview = rows;
+  qs("#quizAttemptReviewsList").innerHTML = rows.map((a) => {
+    const quiz = state.quizzes.find((q) => q.id === a.quizId);
+    const theoryQuestions = (quiz?.questions || [])
+      .map((q, i) => ({ q, i }))
+      .filter((x) => x.q.type === "theory");
+    const title = quiz?.title || a.quizId;
+    const className = state.classes.find((c) => c.id === a.classId)?.name || a.classId;
+    const mcqScore = Number(a.mcqScore ?? a.score ?? 0);
+    if (!theoryQuestions.length) {
+      return `<article class="item">
+        <h4>${escapeHtml(title)}</h4>
+        <p class="meta">${escapeHtml(className)} | ${escapeHtml(a.studentName || "Student")} (${escapeHtml(a.studentRollNo || "-")})</p>
+        <p class="meta">No short questions in this attempt. MCQ score: ${mcqScore}</p>
+      </article>`;
+    }
+    const rowsHtml = theoryQuestions.map(({ q, i }) => {
+      const ans = String(a.answers?.[i] || "").trim();
+      const given = a.theoryMarks && a.theoryMarks[i] != null ? Number(a.theoryMarks[i]) : "";
+      return `<div class="question">
+        <p><strong>Q${i + 1}</strong> ${escapeHtml((q.promptHtml || "").replace(/<[^>]+>/g, "").slice(0, 180))}</p>
+        <p class="meta">Student answer: ${escapeHtml(ans || "Not answered")}</p>
+        <label>Marks (Max ${Number(q.maxMarks || 5)})
+          <input data-review-attempt="${a.id}" data-qi="${i}" data-max="${Number(q.maxMarks || 5)}" type="number" min="0" step="0.5" value="${given}" />
+        </label>
+      </div>`;
+    }).join("");
+    const theoryScore = Number(a.theoryScore || 0);
+    const finalScore = Number(a.finalScore ?? (mcqScore + theoryScore));
+    return `<article class="item">
+      <h4>${escapeHtml(title)}</h4>
+      <p class="meta">${escapeHtml(className)} | ${escapeHtml(a.studentName || "Student")} (${escapeHtml(a.studentRollNo || "-")})</p>
+      <p class="meta">MCQ auto: ${mcqScore} | Theory: ${theoryScore} | Final: ${finalScore}</p>
+      ${rowsHtml}
+      <div class="inline-actions">
+        <button data-save-attempt-review="${a.id}" type="button">Save Theory Marks</button>
+      </div>
+    </article>`;
+  }).join("") || "<p>No quiz attempts yet.</p>";
+}
+
+function renderQuizzes() {
+  qs("#quizzesList").innerHTML = state.quizzes
+    .map((q) => {
+      const className = state.classes.find((c) => c.id === q.classId)?.name || q.classId;
+      const totalTheory = (q.questions || []).filter((x) => x.type === "theory").length;
+      const totalMcq = (q.questions || []).filter((x) => x.type !== "theory").length;
+      const totalMarks = (q.questions || []).reduce((sum, x) => sum + Number(x.type === "mcq" ? 1 : (x.maxMarks || 0)), 0);
+      return `<article class="item">
+      <h4>${escapeHtml(q.title)} (Quiz ${q.quizNumber})</h4>
+        <p class="meta">${escapeHtml(className)} | status: ${q.status || "draft"} | ${q.durationMin} mins | attempts limit: ${q.attemptLimit || 1} | MCQ:${totalMcq} Theory:${totalTheory} | Total Marks:${totalMarks} | Anti-cheat: ${q.antiCheatEnabled ? "On" : "Off"}</p>
+        <p class="meta">Attempts open: ${q.acceptingAttempts ? "Yes" : "No"}</p>
+        <div class="inline-actions">
+          <button data-edit-quiz="${q.id}" type="button">Edit</button>
+          <button data-toggle-publish="${q.id}" type="button">${q.status === "published" ? "Move to Draft" : "Publish"}</button>
+          <button data-toggle-start="${q.id}" type="button">${q.acceptingAttempts ? "Stop Attempts" : "Start Attempts"}</button>
+          <button data-toggle-archive="${q.id}" type="button">${q.status === "archived" ? "Unarchive" : "Archive"}</button>
+          <button data-del-quiz="${q.id}" type="button">Delete</button>
+        </div>
+      </article>`;
+    })
+    .join("") || "<p>No published/saved quizzes yet.</p>";
+}
+
+async function renderAssignments() {
+  const submissionsSnap = await getDocs(query(collection(db, "assignmentSubmissions"), where("teacherId", "==", state.me.uid)));
+  const submissions = submissionsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  qs("#assignmentsList").innerHTML = state.assignments
+    .map((a) => {
+      const className = state.classes.find((c) => c.id === a.classId)?.name || a.classId;
+      const subs = submissions.filter((s) => s.assignmentId === a.id);
+      const reviewRows = subs
+        .map((s) => `<tr>
+          <td>${escapeHtml(s.studentName)}</td>
+          <td><a href="${s.fileUrl || (s.fileId ? `./file.html?id=${encodeURIComponent(s.fileId)}&name=${encodeURIComponent(s.fileName || "download")}` : "#")}" target="_blank" rel="noopener">Download</a></td>
+          <td>${escapeHtml(s.status || "submitted")}</td>
+          <td><input data-grade="${s.id}" type="number" min="0" max="100" value="${s.grade ?? ""}" /></td>
+          <td><input data-feedback="${s.id}" value="${escapeHtml(s.feedback || "")}" /></td>
+          <td><button data-save-review="${s.id}" type="button">Save</button></td>
+        </tr>`)
+        .join("");
+      return `<article class="item">
+        <h4>${escapeHtml(a.title)} (A${a.assignmentNumber})</h4>
+        <p class="meta">${escapeHtml(className)} | Deadline: ${fmtDate(a.deadline)}</p>
+        <div class="table-wrap"><table><thead><tr><th>Student</th><th>File</th><th>Status</th><th>Grade</th><th>Feedback</th><th>Action</th></tr></thead><tbody>${reviewRows || "<tr><td colspan='6'>No submissions</td></tr>"}</tbody></table></div>
+      </article>`;
+    })
+    .join("") || "<p>No assignments yet.</p>";
+}
+
+async function renderEvaluationStats() {
+  const evalSnap = await getDocs(query(collection(db, "evaluations"), where("teacherId", "==", state.me.uid)));
+  const commentsByClass = new Map();
+  evalSnap.docs.forEach((d) => {
+    const row = d.data();
+    const text = String(row.comment || "").trim();
+    if (!text) return;
+    const key = row.classId;
+    if (!commentsByClass.has(key)) commentsByClass.set(key, []);
+    commentsByClass.get(key).push({
+      text,
+      name: row.anonymous ? "Anonymous" : (row.studentName || "Student"),
+      submittedAt: row.submittedAt,
+    });
+  });
+
+  qs("#evaluationStatsList").innerHTML = state.evalStats
+    .map((s) => {
+      const className = state.classes.find((c) => c.id === s.classId)?.name || s.classId;
+      const qEntries = Object.entries(s.questionTotals || {}).map(([k, v]) => `${k}: ${(v / (s.count || 1)).toFixed(2)}`);
+      const comments = (commentsByClass.get(s.classId) || [])
+        .sort((a, b) => (b.submittedAt?.seconds || 0) - (a.submittedAt?.seconds || 0))
+        .map((c) => `<p class="meta"><strong>${escapeHtml(c.name)}:</strong> ${escapeHtml(c.text)}</p>`)
+        .join("");
+      return `<article class="item">
+        <h4>${escapeHtml(className)}</h4>
+        <p class="meta">Responses: ${s.count || 0}</p>
+        <p>${escapeHtml(qEntries.join(" | "))}</p>
+        <div>${comments || "<p class='meta'>No comments yet.</p>"}</div>
+      </article>`;
+    })
+    .join("") || "<p>No evaluations submitted yet.</p>";
+}
+
+function renderAnnouncements() {
+  qs("#announcementList").innerHTML = state.announcements
+    .map((a) => {
+      const className = state.classes.find((c) => c.id === a.classId)?.name || a.classId;
+      return `<article class="item"><h4>${escapeHtml(a.title)}</h4><p>${escapeHtml(a.body)}</p><p class="meta">${escapeHtml(className)} | ${fmtDate(a.createdAt)}</p></article>`;
+    })
+    .join("") || "<p>No announcements yet.</p>";
+}
+
+function wireQuizFormAutosave() {
+  ["#quizClassId", "#quizNumber", "#quizTitle", "#quizDuration", "#quizAttemptLimit"].forEach((id) => {
+    qs(id).addEventListener("input", scheduleDraftAutosave);
+    qs(id).addEventListener("change", scheduleDraftAutosave);
+  });
+  qs("#quizAntiCheat").addEventListener("change", scheduleDraftAutosave);
+}
+
+async function publishDraft(draftId) {
+  const d = state.quizDrafts.find((x) => x.id === draftId);
+  if (!d) return;
+  validateQuestions((d.questions || []).map(normalizeQuestion), { strict: true });
+  const existing = state.quizzes.find((q) => q.classId === d.classId && Number(q.quizNumber) === Number(d.quizNumber));
+  const payload = {
+    teacherId: state.me.uid,
+    classId: d.classId,
+    quizNumber: d.quizNumber,
+    title: d.title,
+    durationMin: d.durationMin,
+    attemptLimit: d.attemptLimit || 1,
+    antiCheatEnabled: d.antiCheatEnabled !== false,
+    questions: (d.questions || []).map(normalizeQuestion),
+    status: "published",
+    acceptingAttempts: true,
+    startedAt: serverTimestamp(),
+    publishedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  if (existing) {
+    await updateDoc(doc(db, "quizzes", existing.id), payload);
+  } else {
+    await addDoc(collection(db, "quizzes"), { ...payload, createdAt: serverTimestamp() });
+  }
+  await deleteDoc(doc(db, "quizDrafts", draftId));
+  setDraftStatus("Draft published.");
+}
+
+function resetQuizEditor() {
+  qs("#quizForm").reset();
+  qs("#quizId").value = "";
+  qs("#quizDraftId").value = "";
+  qs("#quizAttemptLimit").value = "1";
+  qs("#quizAntiCheat").checked = true;
+  state.quizQuestions = [];
+  state.activeQuestionIndex = 0;
+  state.draftDirty = false;
+  state.lastDraftHash = "";
+  renderQuestionBuilder();
+  setDraftStatus("");
+}
+
+function wireStaticEvents() {
+  qs("#logoutBtn").addEventListener("click", async () => {
+    await logoutStaff();
+    window.location.href = "./index.html";
+  });
+
+  qs("#classForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = qs("#className").value.trim();
+    const semester = qs("#semester").value.trim();
+    if (!name || !semester) {
+      setClassEnrollMsg("Class name and semester are required.");
+      return;
+    }
+    try {
+      await addDoc(collection(db, "classes"), {
+        teacherId: state.me.uid,
+        teacherName: state.me.name,
+        name,
+        semester,
+        createdAt: serverTimestamp(),
+      });
+      e.target.reset();
+      await refreshData();
+      setClassEnrollMsg(`Class created: ${name} (${semester})`);
+    } catch (err) {
+      setClassEnrollMsg(err.message || "Failed to create class.");
+    }
+  });
+
+  qs("#csvEnrollForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const classId = qs("#enrollClassId").value;
+    const file = qs("#csvFile").files[0];
+    if (!classId) {
+      setClassEnrollMsg("Select a class first.");
+      return;
+    }
+    if (!file) {
+      setClassEnrollMsg("Select a CSV file first.");
+      return;
+    }
+    try {
+      const text = await file.text();
+      const rows = parseCSV(text);
+      if (!rows.length) {
+        setClassEnrollMsg("CSV is empty or invalid.");
+        return;
+      }
+      let enrolled = 0;
+      for (const row of rows) {
+        const rollNo = row.rollno || row.roll_no || row.roll || row["roll number"] || "";
+        const name = row.name || row.student || "";
+        if (!rollNo || !name) continue;
+        const studentId = rollNo.trim().toLowerCase().replaceAll(" ", "_");
+        await setDoc(doc(db, "students", studentId), {
+          rollNo: rollNo.trim(),
+          name: name.trim(),
+          nameLower: name.trim().toLowerCase(),
+        }, { merge: true });
+        const enrollmentId = `${classId}_${studentId}`;
+        await setDoc(doc(db, "enrollments", enrollmentId), {
+          classId,
+          teacherId: state.me.uid,
+          studentId,
+          rollNo: rollNo.trim(),
+          studentName: name.trim(),
+          createdAt: serverTimestamp(),
+        });
+        enrolled += 1;
+      }
+      e.target.reset();
+      setClassEnrollMsg(`Enrollment upload complete. ${enrolled} student(s) processed.`);
+    } catch (err) {
+      setClassEnrollMsg(err.message || "Enrollment upload failed.");
+    }
+  });
+
+  qs("#lectureForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const lectureId = qs("#lectureId").value;
+    const classId = qs("#lectureClassId").value;
+    const title = qs("#lectureTitle").value.trim();
+    const date = qs("#lectureDate").value;
+    const videoLink = qs("#lectureVideo").value.trim();
+    const files = Array.from(qs("#lectureFiles").files || []);
+    const uploaded = [];
+
+    for (const file of files) {
+      try {
+        const storageRef = ref(storage, `teachers/${state.me.uid}/classes/${classId}/lectures/${Date.now()}_${file.name}`);
+        await uploadBytes(storageRef, file);
+        const url = await getDownloadURL(storageRef);
+        uploaded.push({ name: file.name, url, path: storageRef.fullPath, type: file.type, size: file.size, source: "storage" });
+      } catch {
+        const firestoreFile = await uploadFileToFirestore(file, { module: "lecture", teacherId: state.me.uid, classId });
+        uploaded.push(firestoreFile);
+      }
+    }
+
+    if (lectureId) {
+      const prev = state.lectures.find((l) => l.id === lectureId);
+      await updateDoc(doc(db, "lectures", lectureId), {
+        classId,
+        title,
+        date,
+        videoLink,
+        files: [...(prev?.files || []), ...uploaded],
+      });
+    } else {
+      await addDoc(collection(db, "lectures"), {
+        teacherId: state.me.uid,
+        classId,
+        title,
+        date,
+        videoLink,
+        files: uploaded,
+        createdAt: serverTimestamp(),
+      });
+    }
+    e.target.reset();
+    qs("#lectureId").value = "";
+    await refreshData();
+  });
+
+  qs("#addQuestionBtn").addEventListener("click", () => {
+    const mode = qs("#currentQuestionMode")?.value === "theory" ? "theory" : "mcq";
+    state.quizQuestions.push(normalizeQuestion({ type: mode }));
+    state.activeQuestionIndex = state.quizQuestions.length - 1;
+    renderQuestionBuilder();
+    wireQuestionBuilderInputs();
+    scheduleDraftAutosave();
+  });
+
+  qs("#cancelQuestionEditBtn").addEventListener("click", () => {
+    state.activeQuestionIndex = Math.max(0, state.quizQuestions.length - 1);
+    renderQuestionBuilder();
+  });
+
+  qs("#parsePasteBtn").addEventListener("click", () => {
+    const text = qs("#mcqPasteInput").value;
+    const parsed = parsePastedQuestions(text);
+    if (!parsed.length) return alert("Could not parse pasted content. Keep one question block per paragraph.");
+    state.quizQuestions.push(...parsed);
+    state.activeQuestionIndex = state.quizQuestions.length - parsed.length;
+    renderQuestionBuilder();
+    wireQuestionBuilderInputs();
+    scheduleDraftAutosave();
+    setDraftStatus(`${parsed.length} question(s) pasted and added.`);
+  });
+
+  qs("#quizImportForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const file = qs("#quizImportFile").files?.[0];
+    if (!file) return;
+    const mode = qs("#quizImportMode").value;
+    const text = await file.text();
+    const rows = parseCSV(text);
+    const toText = (v) => String(v ?? "").trim();
+    const pickFirst = (...vals) => vals.map(toText).find(Boolean) || "";
+    const parseCorrectIndex = (raw, options) => {
+      const value = toText(raw);
+      if (!value) return 0;
+      if (/^[A-Da-d]$/.test(value)) return value.toUpperCase().charCodeAt(0) - 65;
+      const num = Number(value);
+      if (Number.isInteger(num) && num >= 0 && num <= 3) return num;
+      const byText = options.findIndex((o) => o && o.toLowerCase() === value.toLowerCase());
+      return byText >= 0 ? byText : 0;
+    };
+    const inferType = (row, options, theoryAnswer) => {
+      if (mode !== "mixed") return mode;
+      const raw = pickFirst(row.type, row.questiontype, row.kind, row.format).toLowerCase();
+      if (/(theory|short|subjective|open|descriptive|long)/.test(raw)) return "theory";
+      if (/(mcq|multiple)/.test(raw)) return "mcq";
+      const hasAllOptions = options.every((o) => toText(o));
+      if (!hasAllOptions && toText(theoryAnswer)) return "theory";
+      return "mcq";
+    };
+    const imported = rows.map((r) => {
+      const options = [r.option1, r.option2, r.option3, r.option4].map(toText);
+      const theoryAnswer = pickFirst(r.theoryanswer, r.shortanswer, r.answer, r.modelanswer);
+      const type = inferType(r, options, theoryAnswer);
+      return normalizeQuestion({
+        type,
+        promptHtml: pickFirst(r.prompt, r.question, r.questiontext, r.text),
+        options,
+        correctIndex: parseCorrectIndex(pickFirst(r.correctindex, r.correct, r.correctoption), options),
+        theoryAnswer,
+      });
+    }).filter((q) => {
+      if (!q.promptHtml.trim()) return false;
+      if (q.type === "mcq") {
+        return q.options.every((o) => String(o || "").trim());
+      }
+      return true;
+    });
+    if (!imported.length) {
+      alert("No valid questions found for selected format. Check CSV headers.");
+      return;
+    }
+    state.quizQuestions.push(...imported);
+    state.activeQuestionIndex = state.quizQuestions.length - imported.length;
+    renderQuestionBuilder();
+    wireQuestionBuilderInputs();
+    scheduleDraftAutosave();
+    setDraftStatus(`${imported.length} question(s) imported as ${mode.toUpperCase()}.`);
+    e.target.reset();
+  });
+
+  qs("#quizForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const quizId = qs("#quizId").value;
+    const payload = buildQuizPayload();
+    validateQuestions(payload.questions, { strict: true });
+
+    if (quizId) {
+      const old = state.quizzes.find((q) => q.id === quizId);
+      await updateDoc(doc(db, "quizzes", quizId), {
+        ...payload,
+        status: old?.status || "draft",
+        acceptingAttempts: old?.acceptingAttempts || false,
+        updatedAt: serverTimestamp(),
+      });
+      setDraftStatus("Quiz updated.");
+      state.draftDirty = false;
+      state.lastDraftHash = draftPayloadHash(payload);
+    } else {
+      const draftId = `${state.me.uid}_${payload.classId}_q${payload.quizNumber}`;
+      await setDoc(doc(db, "quizDrafts", draftId), {
+        ...payload,
+        teacherId: state.me.uid,
+        status: "draft",
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      qs("#quizDraftId").value = draftId;
+      setDraftStatus("Draft saved.");
+      state.draftDirty = false;
+      state.lastDraftHash = draftPayloadHash(payload);
+    }
+    await refreshData();
+    await renderQuizAnalytics();
+  });
+
+  wireQuizFormAutosave();
+
+  qs("#saveDraftBtn").addEventListener("click", async () => {
+    try {
+      validateQuestions(state.quizQuestions.map(normalizeQuestion), { strict: false });
+      const ok = await autosaveDraft();
+      if (!ok) alert("Draft was not saved. Select class/quiz and add questions first.");
+    } catch (err) {
+      alert(err.message || "Draft save failed.");
+    }
+  });
+
+  qs("#loadDraftBtn").addEventListener("click", () => {
+    const classId = qs("#quizClassId").value;
+    const quizNumber = Number(qs("#quizNumber").value);
+    const draft = state.quizDrafts.find((d) => d.classId === classId && Number(d.quizNumber) === quizNumber);
+    if (!draft) return alert("No draft found for selected class/quiz.");
+    qs("#quizDraftId").value = draft.id;
+    qs("#quizTitle").value = draft.title || "";
+    qs("#quizDuration").value = draft.durationMin || 10;
+    qs("#quizAttemptLimit").value = draft.attemptLimit || 1;
+    qs("#quizAntiCheat").checked = draft.antiCheatEnabled !== false;
+    state.quizQuestions = (draft.questions || []).map(normalizeQuestion);
+    state.activeQuestionIndex = 0;
+    state.draftDirty = false;
+    state.lastDraftHash = draftPayloadHash(buildQuizPayload());
+    renderQuestionBuilder();
+    wireQuestionBuilderInputs();
+    setDraftStatus("Draft loaded.");
+  });
+
+  qs("#publishCurrentDraftBtn").addEventListener("click", async () => {
+    const draftId = qs("#quizDraftId").value;
+    if (draftId) {
+      await publishDraft(draftId);
+      await refreshData();
+      await renderQuizAnalytics();
+      return;
+    }
+    const classId = qs("#quizClassId").value;
+    const quizNumber = Number(qs("#quizNumber").value);
+    const draft = state.quizDrafts.find((d) => d.classId === classId && Number(d.quizNumber) === quizNumber);
+    if (!draft) return alert("No draft found to publish.");
+    await publishDraft(draft.id);
+    await refreshData();
+    await renderQuizAnalytics();
+  });
+
+  qs("#deleteCurrentDraftBtn").addEventListener("click", async () => {
+    const draftId = qs("#quizDraftId").value;
+    if (draftId) {
+      await deleteDoc(doc(db, "quizDrafts", draftId));
+      resetQuizEditor();
+      await refreshData();
+      return;
+    }
+    const classId = qs("#quizClassId").value;
+    const quizNumber = Number(qs("#quizNumber").value);
+    const draft = state.quizDrafts.find((d) => d.classId === classId && Number(d.quizNumber) === quizNumber);
+    if (!draft) return alert("No draft found to delete.");
+    await deleteDoc(doc(db, "quizDrafts", draft.id));
+    resetQuizEditor();
+    await refreshData();
+  });
+
+  qs("#archiveCurrentQuizBtn").addEventListener("click", async () => {
+    const classId = qs("#quizClassId").value;
+    const quizNumber = Number(qs("#quizNumber").value);
+    const quiz = state.quizzes.find((q) => q.classId === classId && Number(q.quizNumber) === quizNumber);
+    if (!quiz) return alert("No saved quiz found to archive.");
+    await updateDoc(doc(db, "quizzes", quiz.id), {
+      status: "archived",
+      acceptingAttempts: false,
+      archivedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    await refreshData();
+  });
+
+  qs("#restoreCurrentQuizBtn").addEventListener("click", async () => {
+    const classId = qs("#quizClassId").value;
+    const quizNumber = Number(qs("#quizNumber").value);
+    const quiz = state.quizzes.find((q) => q.classId === classId && Number(q.quizNumber) === quizNumber && q.status === "archived");
+    if (!quiz) return alert("No archived quiz found to restore.");
+    await updateDoc(doc(db, "quizzes", quiz.id), {
+      status: "draft",
+      updatedAt: serverTimestamp(),
+    });
+    await refreshData();
+  });
+
+  qs("#announcementForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    await addDoc(collection(db, "discussionThreads"), {
+      classId: qs("#announcementClassId").value,
+      title: qs("#announcementTitle").value.trim(),
+      body: qs("#announcementBody").value.trim(),
+      isAnnouncement: true,
+      teacherId: state.me.uid,
+      createdByRole: "teacher",
+      createdByName: state.me.name,
+      createdAt: serverTimestamp(),
+    });
+    e.target.reset();
+    await refreshData();
+  });
+
+  qs("#quizPreviewClass").addEventListener("change", renderQuizPreview);
+  qs("#quizPreviewSemester").addEventListener("change", renderQuizPreview);
+}
+
+function wireDynamicEvents() {
+  qsa("[data-del-class]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const classId = btn.dataset.delClass;
+      const klass = state.classes.find((c) => c.id === classId);
+      if (!klass) return;
+      if (!confirm(`Delete class "${klass.name}" and related data?`)) return;
+      try {
+        const [enrollSnap, lectureSnap, quizSnap, draftSnap, assignSnap] = await Promise.all([
+          getDocs(query(collection(db, "enrollments"), where("classId", "==", classId), where("teacherId", "==", state.me.uid))),
+          getDocs(query(collection(db, "lectures"), where("classId", "==", classId), where("teacherId", "==", state.me.uid))),
+          getDocs(query(collection(db, "quizzes"), where("classId", "==", classId), where("teacherId", "==", state.me.uid))),
+          getDocs(query(collection(db, "quizDrafts"), where("classId", "==", classId), where("teacherId", "==", state.me.uid))),
+          getDocs(query(collection(db, "assignments"), where("classId", "==", classId), where("teacherId", "==", state.me.uid))),
+        ]);
+        for (const d of enrollSnap.docs) await deleteDoc(doc(db, "enrollments", d.id));
+        for (const d of lectureSnap.docs) await deleteDoc(doc(db, "lectures", d.id));
+        for (const d of quizSnap.docs) await deleteDoc(doc(db, "quizzes", d.id));
+        for (const d of draftSnap.docs) await deleteDoc(doc(db, "quizDrafts", d.id));
+        for (const d of assignSnap.docs) await deleteDoc(doc(db, "assignments", d.id));
+        await deleteDoc(doc(db, "classes", classId));
+        setClassEnrollMsg(`Class deleted: ${klass.name}`);
+        await refreshData();
+      } catch (err) {
+        setClassEnrollMsg(err.message || "Failed to delete class.");
+      }
+    });
+  });
+
+  qsa("[data-edit-lecture]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const row = state.lectures.find((x) => x.id === btn.dataset.editLecture);
+      if (!row) return;
+      qs("#lectureId").value = row.id;
+      qs("#lectureClassId").value = row.classId;
+      qs("#lectureTitle").value = row.title;
+      qs("#lectureDate").value = row.date;
+      qs("#lectureVideo").value = row.videoLink || "";
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  });
+
+  qsa("[data-del-lecture]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const row = state.lectures.find((x) => x.id === btn.dataset.delLecture);
+      if (!row) return;
+      if (!confirm("Delete this lecture?")) return;
+      for (const f of row.files || []) {
+        if (!f.path) continue;
+        await deleteObject(ref(storage, f.path)).catch(() => {});
+      }
+      await deleteDoc(doc(db, "lectures", row.id));
+      await refreshData();
+    });
+  });
+
+  qsa("[data-edit-draft]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const d = state.quizDrafts.find((x) => x.id === btn.dataset.editDraft);
+      if (!d) return;
+      qs("#quizId").value = "";
+      qs("#quizDraftId").value = d.id;
+      qs("#quizClassId").value = d.classId;
+      qs("#quizNumber").value = d.quizNumber;
+      qs("#quizTitle").value = d.title || "";
+      qs("#quizDuration").value = d.durationMin || 10;
+      qs("#quizAttemptLimit").value = d.attemptLimit || 1;
+      qs("#quizAntiCheat").checked = d.antiCheatEnabled !== false;
+      state.quizQuestions = (d.questions || []).map(normalizeQuestion);
+      state.activeQuestionIndex = 0;
+      state.draftDirty = false;
+      state.lastDraftHash = draftPayloadHash(buildQuizPayload());
+      renderQuestionBuilder();
+      wireQuestionBuilderInputs();
+      setDraftStatus("Draft loaded.");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  });
+
+  qsa("[data-publish-draft]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await publishDraft(btn.dataset.publishDraft);
+      await refreshData();
+      await renderQuizAnalytics();
+    });
+  });
+
+  qsa("[data-del-draft]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Delete this draft?")) return;
+      await deleteDoc(doc(db, "quizDrafts", btn.dataset.delDraft));
+      await refreshData();
+    });
+  });
+
+  qsa("[data-edit-quiz]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const row = state.quizzes.find((x) => x.id === btn.dataset.editQuiz);
+      if (!row) return;
+      qs("#quizId").value = row.id;
+      qs("#quizDraftId").value = "";
+      qs("#quizClassId").value = row.classId;
+      qs("#quizNumber").value = row.quizNumber;
+      qs("#quizTitle").value = row.title;
+      qs("#quizDuration").value = row.durationMin;
+      qs("#quizAttemptLimit").value = row.attemptLimit || 1;
+      qs("#quizAntiCheat").checked = row.antiCheatEnabled !== false;
+      state.quizQuestions = (row.questions || []).map(normalizeQuestion);
+      state.activeQuestionIndex = 0;
+      state.draftDirty = false;
+      state.lastDraftHash = draftPayloadHash(buildQuizPayload());
+      renderQuestionBuilder();
+      wireQuestionBuilderInputs();
+      setDraftStatus("Published quiz loaded for editing.");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  });
+
+  qsa("[data-toggle-publish]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const row = state.quizzes.find((x) => x.id === btn.dataset.togglePublish);
+      if (!row) return;
+      const nextStatus = row.status === "published" ? "draft" : "published";
+      await updateDoc(doc(db, "quizzes", row.id), {
+        status: nextStatus,
+        acceptingAttempts: nextStatus === "published",
+        startedAt: nextStatus === "published" ? serverTimestamp() : null,
+        updatedAt: serverTimestamp(),
+      });
+      await refreshData();
+      await renderQuizAnalytics();
+    });
+  });
+
+  qsa("[data-toggle-start]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const row = state.quizzes.find((x) => x.id === btn.dataset.toggleStart);
+      if (!row) return;
+      if (row.status !== "published") return alert("Publish quiz first.");
+      await updateDoc(doc(db, "quizzes", row.id), {
+        acceptingAttempts: !row.acceptingAttempts,
+        startedAt: !row.acceptingAttempts ? serverTimestamp() : row.startedAt || null,
+        updatedAt: serverTimestamp(),
+      });
+      await refreshData();
+    });
+  });
+
+  qsa("[data-toggle-archive]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const row = state.quizzes.find((x) => x.id === btn.dataset.toggleArchive);
+      if (!row) return;
+      const archived = row.status === "archived";
+      await updateDoc(doc(db, "quizzes", row.id), {
+        status: archived ? "draft" : "archived",
+        acceptingAttempts: false,
+        archivedAt: archived ? null : serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await refreshData();
+    });
+  });
+
+  qsa("[data-del-quiz]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Delete this quiz?")) return;
+      await deleteDoc(doc(db, "quizzes", btn.dataset.delQuiz));
+      await refreshData();
+      await renderQuizAnalytics();
+      resetQuizEditor();
+    });
+  });
+
+  qsa("[data-save-attempt-review]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const attemptId = btn.dataset.saveAttemptReview;
+      const attempt = state.quizAttemptsReview.find((a) => a.id === attemptId);
+      if (!attempt) return;
+      const quiz = state.quizzes.find((q) => q.id === attempt.quizId);
+      if (!quiz) return;
+      const theoryMarks = {};
+      let theoryScore = 0;
+      const inputs = qsa(`[data-review-attempt="${attemptId}"]`);
+      for (const el of inputs) {
+        const qi = Number(el.dataset.qi);
+        const max = Number(el.dataset.max || 0);
+        const raw = String(el.value || "").trim();
+        const value = raw ? Number(raw) : 0;
+        if (!Number.isFinite(value) || value < 0 || value > max) {
+          alert(`Invalid marks for Q${qi + 1}. Use 0 to ${max}.`);
+          return;
+        }
+        theoryMarks[qi] = value;
+        theoryScore += value;
+      }
+      const mcqScore = Number(attempt.mcqScore ?? attempt.score ?? 0);
+      const finalScore = mcqScore + theoryScore;
+      await updateDoc(doc(db, "quizAttempts", attemptId), {
+        theoryMarks,
+        theoryScore,
+        finalScore,
+        theoryPending: false,
+        reviewedBy: state.me.uid,
+        reviewedAt: serverTimestamp(),
+      });
+      await renderQuizAttemptReviews();
+      wireDynamicEvents();
+    });
+  });
+
+  qsa("[data-save-review]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.saveReview;
+      const grade = Number(qs(`[data-grade="${id}"]`)?.value || 0);
+      const feedback = qs(`[data-feedback="${id}"]`)?.value || "";
+      await updateDoc(doc(db, "assignmentSubmissions", id), {
+        grade,
+        feedback,
+        status: "reviewed",
+        reviewedAt: serverTimestamp(),
+      });
+      await renderAssignments();
+      wireDynamicEvents();
+    });
+  });
+}
+
+async function initAssignmentCreate() {
+  qs("#assignmentForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    await addDoc(collection(db, "assignments"), {
+      teacherId: state.me.uid,
+      classId: qs("#assignmentClassId").value,
+      assignmentNumber: Number(qs("#assignmentNumber").value),
+      title: qs("#assignmentTitle").value.trim(),
+      deadline: new Date(qs("#assignmentDeadline").value).toISOString(),
+      createdAt: serverTimestamp(),
+    });
+    e.target.reset();
+    await refreshData();
+  });
+}
+
+async function boot() {
+  state.me = await requireStaffRole(["teacher"]);
+  qs("#whoami").textContent = `${state.me.name} (${state.me.email})`;
+  wireStaticEvents();
+  await initAssignmentCreate();
+  await refreshData();
+  await renderQuizAnalytics();
+}
+
+boot().catch((err) => {
+  alert(err.message);
+});

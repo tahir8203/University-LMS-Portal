@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>University LMS - Student</title>
+  <link rel="stylesheet" href="./css/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Student Portal</h1>
+    <div>
+      <span id="whoami"></span>
+      <button id="logoutBtn" type="button">Logout</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h2>My Classes</h2>
+      <div id="myClassesList" class="list"></div>
+    </section>
+
+    <section class="card">
+      <h2>Lectures</h2>
+      <select id="lectureClassFilter"></select>
+      <div id="studentLecturesList" class="list"></div>
+    </section>
+
+    <section class="card">
+      <h2>Quizzes</h2>
+      <select id="quizClassFilter"></select>
+      <div id="studentQuizzesList" class="list"></div>
+      <div id="quizAttemptArea"></div>
+    </section>
+
+    <section class="card">
+      <h2>Assignments</h2>
+      <select id="assignmentClassFilter"></select>
+      <div id="studentAssignmentsList" class="list"></div>
+    </section>
+
+    <section class="card">
+      <h2>Discussion Forum</h2>
+      <form id="threadForm" class="grid two">
+        <select id="threadClassId" required></select>
+        <input id="threadTitle" placeholder="Thread title" required />
+        <textarea id="threadBody" placeholder="Write your message" required></textarea>
+        <button id="announceBtn" type="button">Post Announcement (Teacher only)</button>
+        <button type="submit">Post Thread</button>
+      </form>
+      <div id="threadsList" class="list"></div>
+      <div class="inline-actions">
+        <button id="prevThreadsBtn" type="button">Previous</button>
+        <button id="nextThreadsBtn" type="button">Next</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Teacher Evaluation</h2>
+      <form id="evaluationForm" class="grid two"></form>
+      <p id="evaluationMsg" class="message"></p>
+    </section>
+
+    <section class="card">
+      <h2>Certificate & Gamification</h2>
+      <select id="certificateClassId"></select>
+      <button id="generateCertificateBtn" type="button">Generate Certificate</button>
+      <p id="certificateMsg" class="message"></p>
+      <div id="gamificationView"></div>
+    </section>
+  </main>
+
+  <script type="module" src="./js/student.js"></script>
+</body>
+</html>

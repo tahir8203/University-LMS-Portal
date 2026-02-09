@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LMS Certificate</title>
+  <link rel="stylesheet" href="./css/styles.css" />
+</head>
+<body>
+  <main class="certificate" id="certificateView">
+    <h1>Certificate of Completion</h1>
+    <p>This certifies that</p>
+    <h2 id="certStudent">-</h2>
+    <p>has successfully completed class</p>
+    <h3 id="certClass">-</h3>
+    <p>Issued on <span id="certDate">-</span></p>
+    <p id="certCode"></p>
+    <button type="button" onclick="window.print()">Print / Save as PDF</button>
+  </main>
+  <script type="module" src="./js/certificate.js"></script>
+</body>
+</html>

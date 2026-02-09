@@ -1,0 +1,615 @@
+:root {
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --ink: #15202b;
+  --muted: #5b6873;
+  --primary: #0a5ad1;
+  --danger: #b72828;
+  --ok: #1f8a40;
+  --border: #d9e0e6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  color: var(--ink);
+  background: radial-gradient(circle at top right, #e8eef9, #f7f9fb 45%, #f1f5f7);
+}
+
+h1, h2, h3, p {
+  margin: 0 0 10px;
+}
+
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.auth-card, .card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(15, 34, 58, 0.08);
+}
+
+.auth-card {
+  width: min(520px, 100%);
+  padding: 24px;
+}
+
+.subtitle {
+  color: var(--muted);
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.tab {
+  flex: 1;
+}
+
+.tab.active {
+  background: var(--primary);
+  color: white;
+}
+
+form {
+  display: grid;
+  gap: 8px;
+}
+
+input, select, textarea, button {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: #eef3fa;
+}
+
+button:hover {
+  background: #dde8f6;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.message {
+  min-height: 22px;
+  margin-top: 10px;
+  color: var(--muted);
+}
+
+.status-banner {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.status-pending {
+  background: #fff8db;
+  border-color: #e6cf72;
+  color: #6b5600;
+}
+
+.status-approved {
+  background: #eaf8ed;
+  border-color: #8ac79d;
+  color: #176735;
+}
+
+.status-rejected {
+  background: #fdecec;
+  border-color: #e7a1a1;
+  color: #8d2222;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: #10273f;
+  color: white;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+}
+
+.topbar button {
+  width: auto;
+  margin-left: 10px;
+  background: #f2f6fb;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 20px auto;
+  padding: 0 14px 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  padding: 16px;
+}
+
+.grid {
+  display: grid;
+  gap: 10px;
+}
+
+.grid.two {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.grid.three {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.stat p {
+  font-size: 30px;
+  font-weight: 700;
+}
+
+.table-wrap {
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td {
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  padding: 8px;
+  vertical-align: top;
+}
+
+.list {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fbfcfd;
+}
+
+.item .meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.inline-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.bad {
+  color: var(--danger);
+}
+
+.question {
+  border: 1px dashed #b8cadf;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.toolbar button {
+  width: auto;
+  padding: 6px 10px;
+}
+
+.quiz-builder {
+  display: grid;
+  grid-template-columns: minmax(230px, 280px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.question-list {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  max-height: 620px;
+  overflow: auto;
+  background: #fff;
+  position: sticky;
+  top: 84px;
+}
+
+.question-row {
+  border: 1px solid #d6e4ff;
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: linear-gradient(180deg, #f7faff, #fdfefe);
+}
+
+.question-row.active {
+  border-color: #3e7bfa;
+  background: linear-gradient(180deg, #e8f0ff, #f4f8ff);
+  box-shadow: 0 8px 20px rgba(20, 73, 171, 0.1);
+}
+
+.question-editor {
+  border: 1px solid #d4e0f5;
+  border-radius: 12px;
+  padding: 14px;
+  background: #ffffff;
+  min-height: 620px;
+}
+
+.question-editor textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+#currentPrompt {
+  min-height: 180px;
+}
+
+.quiz-shell {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.quiz-left.card,
+.quiz-right.card {
+  padding: 16px;
+  background: linear-gradient(160deg, #ffffff 10%, #f6faff 100%);
+  border-color: #cfe0ff;
+}
+
+.quiz-left.card {
+  box-shadow: 0 14px 32px rgba(15, 71, 150, 0.12);
+}
+
+.quiz-right.card {
+  box-shadow: 0 12px 26px rgba(14, 74, 76, 0.08);
+  max-width: 100%;
+  justify-self: stretch;
+}
+
+.quiz-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.quiz-top-filters {
+  margin-bottom: 10px;
+}
+
+#quizForm {
+  grid-template-columns: repeat(2, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+#quizForm label,
+#quizForm button {
+  grid-column: 1 / -1;
+}
+
+#quizForm #addQuestionBtn {
+  max-width: 240px;
+}
+
+.quiz-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.chip-blue {
+  background: #eaf1ff;
+  color: #1148b5;
+  border-color: #bfd4ff;
+}
+
+.chip-green {
+  background: #e8faef;
+  color: #15733a;
+  border-color: #bfe9ce;
+}
+
+.chip-amber {
+  background: #fff7e6;
+  color: #9a5b00;
+  border-color: #f4d8a6;
+}
+
+.chip-slate {
+  background: #eef2f7;
+  color: #304257;
+  border-color: #d3dce8;
+}
+
+.q-type-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid #cad8ee;
+  background: #f1f5fb;
+  color: #2b496e;
+}
+
+.quiz-primary-actions button {
+  background: #eaf1ff;
+  border-color: #c4d9ff;
+}
+
+.quiz-primary-actions button:hover {
+  background: #dbe9ff;
+}
+
+.quiz-draft-status {
+  font-weight: 600;
+  color: #28436d;
+}
+
+/* Student evaluation UI */
+#evaluationForm {
+  display: block;
+  gap: 14px;
+  background:
+    radial-gradient(circle at top right, #f4f9ff 0%, transparent 38%),
+    linear-gradient(180deg, #fdfefe 0%, #f7fbff 100%);
+  border: 1px solid #d7e6ff;
+  border-radius: 14px;
+  padding: 14px;
+}
+
+#evaluationForm .eval-top {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  background: #edf4ff;
+  border: 1px solid #cddfff;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+#evaluationForm .eval-control {
+  font-weight: 600;
+  color: #213956;
+}
+
+#evaluationForm .eval-anon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid #bfd2f7;
+  background: #ffffff;
+  color: #24466b;
+  height: fit-content;
+}
+
+#evaluationForm .eval-anon input {
+  width: auto;
+  margin: 0;
+}
+
+#evaluationForm .eval-grid {
+  display: grid;
+  gap: 12px;
+}
+
+#evaluationForm .eval-grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
+}
+
+#evaluationForm .eval-block {
+  border: 1px solid #d6e4ff;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff, #f9fcff);
+  padding: 12px;
+  box-shadow: 0 10px 22px rgba(21, 67, 130, 0.06);
+  height: 100%;
+}
+
+#evaluationForm .eval-block h4 {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #eaf2ff;
+  color: #1c3f72;
+}
+
+#evaluationForm .eval-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+  border: 1px solid #e0eaf8;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+#evaluationForm .eval-row:last-child {
+  margin-bottom: 0;
+}
+
+#evaluationForm .eval-q-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid #b9d0f5;
+  background: #eef4ff;
+  color: #21477d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+#evaluationForm .eval-q-text {
+  color: #193251;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+#evaluationForm .eval-row select {
+  width: 100%;
+}
+
+#evaluationForm .eval-comment {
+  border: 1px solid #d6e4ff;
+  border-radius: 12px;
+  padding: 10px;
+  background: #fff;
+  color: #243f63;
+  font-weight: 600;
+}
+
+#evaluationForm .eval-comment textarea {
+  margin-top: 8px;
+  min-height: 110px;
+}
+
+#evaluationForm .eval-note {
+  margin: 2px 0 0;
+  color: #486182;
+}
+
+#evaluationForm .eval-submit-btn {
+  background: linear-gradient(135deg, #0e61d6, #0a4aa4);
+  border: 1px solid #0c4fb1;
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+#evaluationForm .eval-submit-btn:hover {
+  background: linear-gradient(135deg, #0f58c0, #083f8a);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(13, 70, 150, 0.28);
+}
+
+@media (max-width: 760px) {
+  #evaluationForm .eval-top {
+    grid-template-columns: 1fr;
+  }
+  
+  #evaluationForm .eval-grid-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1280px) {
+  #evaluationForm .eval-grid-4 {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+}
+
+details {
+  margin-top: 10px;
+}
+
+summary {
+  cursor: pointer;
+  color: #1a2e46;
+  margin-bottom: 8px;
+}
+
+.certificate {
+  max-width: 780px;
+  margin: 24px auto;
+  background: #fff;
+  border: 12px solid #183f6e;
+  border-radius: 8px;
+  padding: 26px;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .quiz-builder {
+    grid-template-columns: 1fr;
+  }
+
+  .quiz-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .question-list {
+    position: static;
+    max-height: 320px;
+  }
+
+  .question-editor {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 1120px) {
+  .question-list {
+    position: static;
+    max-height: 300px;
+  }
+
+  #quizForm {
+    grid-template-columns: 1fr;
+  }
+}

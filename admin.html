@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>University LMS - Admin</title>
+  <link rel="stylesheet" href="./css/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Admin Panel</h1>
+    <div>
+      <span id="whoami"></span>
+      <button id="logoutBtn" type="button">Logout</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="grid three">
+      <article class="card stat"><h3>Teachers</h3><p id="teachersCount">0</p></article>
+      <article class="card stat"><h3>Classes</h3><p id="classesCount">0</p></article>
+      <article class="card stat"><h3>Lectures</h3><p id="lecturesCount">0</p></article>
+    </section>
+
+    <section class="card">
+      <h2>Teachers (Read-only)</h2>
+      <div class="table-wrap"><table id="teachersTable"><thead><tr><th>Name</th><th>Email</th></tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Teacher Approval Requests</h2>
+      <div class="table-wrap"><table id="pendingTeachersTable"><thead><tr><th>Name</th><th>Email</th><th>Requested</th><th>Action</th></tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Classes (Read-only)</h2>
+      <div class="table-wrap"><table id="classesTable"><thead><tr><th>Class</th><th>Semester</th><th>Teacher</th><th>Created</th></tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Lectures Delivered (Read-only)</h2>
+      <div class="table-wrap"><table id="lecturesTable"><thead><tr><th>Class</th><th>Title</th><th>Date</th><th>Teacher</th></tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Teacher Evaluations (Full Data)</h2>
+      <div class="table-wrap"><table id="evaluationsTable"><thead><tr><th>Class</th><th>Teacher</th><th>Anonymous</th><th>Student</th><th>Avg</th><th>Submitted</th></tr></thead><tbody></tbody></table></div>
+    </section>
+  </main>
+
+  <script type="module" src="./js/admin.js"></script>
+</body>
+</html>
