@@ -11,6 +11,7 @@ import {
   getDocs,
   updateDoc,
   deleteDoc,
+  writeBatch,
   doc,
   query,
   where,
@@ -109,7 +110,7 @@ function setClassEnrollMsg(text) {
 
 function fillClassSelects() {
   const html = ['<option value="">Select class</option>']
-    .concat(state.classes.map((c) => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.semester)})</option>`))
+    .concat(state.classes.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}${c.subject ? ` - ${escapeHtml(c.subject)}` : ""} (${escapeHtml(c.semester)})</option>`))
     .join("");
   ["#enrollClassId", "#lectureClassId", "#quizClassId", "#assignmentClassId", "#announcementClassId", "#quizPreviewClass"].forEach((s) => {
     const el = qs(s);
@@ -178,7 +179,7 @@ function renderClasses() {
   qs("#classesList").innerHTML = state.classes
     .map((c) => `<article class="item">
       <h4>${escapeHtml(c.name)}</h4>
-      <p class="meta">${escapeHtml(c.semester)} | ${fmtDate(c.createdAt)}</p>
+      <p class="meta">${escapeHtml(c.subject || "No subject")} | ${escapeHtml(c.semester)} | ${fmtDate(c.createdAt)}</p>
       <div class="inline-actions">
         <button data-del-class="${c.id}" type="button">Delete Class</button>
       </div>
@@ -635,23 +636,37 @@ async function renderAssignments() {
       return `<article class="item">
         <h4>${escapeHtml(a.title)} (A${a.assignmentNumber})</h4>
         <p class="meta">${escapeHtml(className)} | Deadline: ${fmtDate(a.deadline)}</p>
+        <div class="inline-actions">
+          <button data-del-assignment="${a.id}" type="button">Delete Assignment</button>
+        </div>
         <div class="table-wrap"><table><thead><tr><th>Student</th><th>File</th><th>Status</th><th>Grade</th><th>Feedback</th><th>Action</th></tr></thead><tbody>${reviewRows || "<tr><td colspan='6'>No submissions</td></tr>"}</tbody></table></div>
       </article>`;
     })
     .join("") || "<p>No assignments yet.</p>";
 }
 
+async function deleteFirestorePayload(fileId) {
+  const safeId = String(fileId || "").trim();
+  if (!safeId) return;
+  const chunkSnap = await getDocs(collection(db, "filePayloads", safeId, "chunks"));
+  for (const chunk of chunkSnap.docs) {
+    await deleteDoc(doc(db, "filePayloads", safeId, "chunks", chunk.id));
+  }
+  await deleteDoc(doc(db, "filePayloads", safeId));
+}
+
 async function renderEvaluationStats() {
   const evalSnap = await getDocs(query(collection(db, "evaluations"), where("teacherId", "==", state.me.uid)));
-  const commentsByClass = new Map();
-  evalSnap.docs.forEach((d) => {
-    const row = d.data();
-    const text = String(row.comment || "").trim();
-    if (!text) return;
+  const evaluations = evalSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (b.submittedAt?.seconds || 0) - (a.submittedAt?.seconds || 0));
+  const evaluationsByClass = new Map();
+  evaluations.forEach((row) => {
     const key = row.classId;
-    if (!commentsByClass.has(key)) commentsByClass.set(key, []);
-    commentsByClass.get(key).push({
-      text,
+    if (!evaluationsByClass.has(key)) evaluationsByClass.set(key, []);
+    evaluationsByClass.get(key).push({
+      id: row.id,
+      text: String(row.comment || "").trim(),
       name: row.anonymous ? "Anonymous" : (row.studentName || "Student"),
       submittedAt: row.submittedAt,
     });
@@ -661,18 +676,56 @@ async function renderEvaluationStats() {
     .map((s) => {
       const className = state.classes.find((c) => c.id === s.classId)?.name || s.classId;
       const qEntries = Object.entries(s.questionTotals || {}).map(([k, v]) => `${k}: ${(v / (s.count || 1)).toFixed(2)}`);
-      const comments = (commentsByClass.get(s.classId) || [])
+      const entries = (evaluationsByClass.get(s.classId) || [])
         .sort((a, b) => (b.submittedAt?.seconds || 0) - (a.submittedAt?.seconds || 0))
-        .map((c) => `<p class="meta"><strong>${escapeHtml(c.name)}:</strong> ${escapeHtml(c.text)}</p>`)
+        .map((c) => `<div class="inline-actions">
+          <p class="meta"><strong>${escapeHtml(c.name)}:</strong> ${escapeHtml(c.text || "No comment")} | ${fmtDate(c.submittedAt)}</p>
+          <button data-del-eval="${c.id}" type="button">Delete Evaluation</button>
+        </div>`)
         .join("");
       return `<article class="item">
         <h4>${escapeHtml(className)}</h4>
         <p class="meta">Responses: ${s.count || 0}</p>
         <p>${escapeHtml(qEntries.join(" | "))}</p>
-        <div>${comments || "<p class='meta'>No comments yet.</p>"}</div>
+        <div>${entries || "<p class='meta'>No evaluations yet.</p>"}</div>
       </article>`;
     })
     .join("") || "<p>No evaluations submitted yet.</p>";
+}
+
+async function deleteEvaluationAsTeacher(evaluationId) {
+  const evaluationRef = doc(db, "evaluations", evaluationId);
+  const evaluationSnap = await getDoc(evaluationRef);
+  if (!evaluationSnap.exists()) return;
+  const evaluation = evaluationSnap.data() || {};
+  if (evaluation.teacherId !== state.me.uid) return;
+
+  const classId = evaluation.classId;
+  const statsRef = doc(db, "evaluationStats", classId);
+  const statsSnap = await getDoc(statsRef);
+  const stats = statsSnap.exists() ? (statsSnap.data() || {}) : null;
+  const questionScores = evaluation.questionScores || {};
+  const nextStats = {
+    classId,
+    teacherId: state.me.uid,
+    count: 0,
+    questionTotals: {},
+    updatedAt: serverTimestamp(),
+  };
+  if (stats) {
+    nextStats.count = Math.max(0, Number(stats.count || 0) - 1);
+    const baseTotals = stats.questionTotals || {};
+    for (const key of Object.keys(baseTotals)) {
+      const remaining = Number(baseTotals[key] || 0) - Number(questionScores[key] || 0);
+      if (remaining > 0) nextStats.questionTotals[key] = remaining;
+    }
+  }
+
+  const batch = writeBatch(db);
+  batch.delete(evaluationRef);
+  batch.delete(doc(db, "evaluationAudits", evaluationId));
+  batch.set(statsRef, nextStats, { merge: true });
+  await batch.commit();
 }
 
 function renderAnnouncements() {
@@ -744,9 +797,10 @@ function wireStaticEvents() {
   qs("#classForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = qs("#className").value.trim();
+    const subject = qs("#classSubject").value.trim();
     const semester = qs("#semester").value.trim();
-    if (!name || !semester) {
-      setClassEnrollMsg("Class name and semester are required.");
+    if (!name || !subject || !semester) {
+      setClassEnrollMsg("Class name, subject, and semester are required.");
       return;
     }
     try {
@@ -754,12 +808,13 @@ function wireStaticEvents() {
         teacherId: state.me.uid,
         teacherName: state.me.name,
         name,
+        subject,
         semester,
         createdAt: serverTimestamp(),
       });
       e.target.reset();
       await refreshData();
-      setClassEnrollMsg(`Class created: ${name} (${semester})`);
+      setClassEnrollMsg(`Class created: ${name} - ${subject} (${semester})`);
     } catch (err) {
       setClassEnrollMsg(err.message || "Failed to create class.");
     }
@@ -796,8 +851,11 @@ function wireStaticEvents() {
           nameLower: name.trim().toLowerCase(),
         }, { merge: true });
         const enrollmentId = `${classId}_${studentId}`;
+        const selectedClass = state.classes.find((c) => c.id === classId);
         await setDoc(doc(db, "enrollments", enrollmentId), {
           classId,
+          className: selectedClass?.name || "",
+          subject: selectedClass?.subject || "",
           teacherId: state.me.uid,
           studentId,
           rollNo: rollNo.trim(),
@@ -1312,6 +1370,45 @@ function wireDynamicEvents() {
       });
       await renderAssignments();
       wireDynamicEvents();
+    });
+  });
+
+  qsa("[data-del-assignment]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const assignmentId = btn.dataset.delAssignment;
+      const assignment = state.assignments.find((a) => a.id === assignmentId);
+      if (!assignment) return;
+      if (!confirm(`Delete assignment "${assignment.title}" and all submissions?`)) return;
+
+      const submissionsSnap = await getDocs(query(
+        collection(db, "assignmentSubmissions"),
+        where("assignmentId", "==", assignmentId),
+        where("teacherId", "==", state.me.uid)
+      ));
+
+      for (const s of submissionsSnap.docs) {
+        const data = s.data() || {};
+        if (data.filePath) {
+          await deleteObject(ref(storage, data.filePath)).catch(() => {});
+        }
+        if (data.fileId) {
+          await deleteFirestorePayload(data.fileId).catch(() => {});
+        }
+        await deleteDoc(doc(db, "assignmentSubmissions", s.id));
+      }
+
+      await deleteDoc(doc(db, "assignments", assignmentId));
+      await refreshData();
+    });
+  });
+
+  qsa("[data-del-eval]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const evaluationId = btn.dataset.delEval;
+      if (!evaluationId) return;
+      if (!confirm("Delete this evaluation? Student will be able to submit again.")) return;
+      await deleteEvaluationAsTeacher(evaluationId);
+      await refreshData();
     });
   });
 }

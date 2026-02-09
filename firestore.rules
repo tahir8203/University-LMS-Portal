@@ -23,6 +23,16 @@ service cloud.firestore {
       return isAdmin() || isTeacher();
     }
 
+    function teacherOwnsAssignment(assignmentId) {
+      return assignmentId is string
+        && exists(/databases/$(database)/documents/assignments/$(assignmentId))
+        && get(/databases/$(database)/documents/assignments/$(assignmentId)).data.teacherId == request.auth.uid;
+    }
+
+    match /{document=**} {
+      allow read, write: if isAdmin();
+    }
+
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isStaff());
       allow create: if signedIn()
@@ -108,7 +118,7 @@ service cloud.firestore {
             || (request.resource.data.fileId is string)
           )
         );
-      allow delete: if false;
+      allow delete: if isTeacher() && resource.data.teacherId == request.auth.uid;
     }
 
     match /discussionThreads/{threadId} {
@@ -130,8 +140,32 @@ service cloud.firestore {
       allow read: if isStaff();
       allow create: if request.resource.data.classId is string
         && request.resource.data.teacherId is string
-        && request.resource.data.questionScores is map;
-      allow update, delete: if false;
+        && request.resource.data.questionScores is map
+        && request.resource.data.anonymous is bool
+        && (
+          request.resource.data.anonymous == true
+          || (
+            request.resource.data.studentKey is string
+            && request.resource.data.studentName is string
+            && request.resource.data.studentRollNo is string
+          )
+        );
+      allow update: if false;
+      allow delete: if isAdmin()
+        || (isTeacher() && resource.data.teacherId == request.auth.uid);
+    }
+
+    match /evaluationAudits/{evaluationId} {
+      allow read: if isAdmin();
+      allow create: if request.resource.data.classId is string
+        && request.resource.data.teacherId is string
+        && request.resource.data.evaluationId == evaluationId
+        && request.resource.data.studentKey is string
+        && request.resource.data.studentName is string
+        && request.resource.data.studentRollNo is string;
+      allow update: if false;
+      allow delete: if isAdmin()
+        || (isTeacher() && resource.data.teacherId == request.auth.uid);
     }
 
     match /evaluationStats/{classId} {
@@ -153,12 +187,26 @@ service cloud.firestore {
     match /filePayloads/{fileId} {
       allow read: if true;
       allow create: if true;
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isAdmin()
+        || (
+          isTeacher()
+          && resource.data.context is map
+          && resource.data.context.assignmentId is string
+          && teacherOwnsAssignment(resource.data.context.assignmentId)
+        );
 
       match /chunks/{chunkId} {
         allow read: if true;
         allow create: if true;
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if isAdmin()
+          || (
+            isTeacher()
+            && get(/databases/$(database)/documents/filePayloads/$(fileId)).data.context is map
+            && get(/databases/$(database)/documents/filePayloads/$(fileId)).data.context.assignmentId is string
+            && teacherOwnsAssignment(get(/databases/$(database)/documents/filePayloads/$(fileId)).data.context.assignmentId)
+          );
       }
     }
   }

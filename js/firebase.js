@@ -18,6 +18,7 @@ import {
   startAfter,
   writeBatch,
   runTransaction,
+  increment,
 } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
 import {
   getStorage,
@@ -62,6 +63,7 @@ export {
   startAfter,
   writeBatch,
   runTransaction,
+  increment,
   ref,
   uploadBytes,
   getDownloadURL,

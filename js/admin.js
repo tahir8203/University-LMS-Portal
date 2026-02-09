@@ -28,12 +28,13 @@ async function loadAdmin() {
     window.location.href = "./index.html";
   });
 
-  const [teacherSnap, pendingSnap, classSnap, lectureSnap, evalSnap] = await Promise.all([
+  const [teacherSnap, pendingSnap, classSnap, lectureSnap, evalSnap, evalAuditSnap] = await Promise.all([
     getDocs(query(collection(db, "users"), where("role", "==", "teacher"))),
     getDocs(query(collection(db, "users"), where("role", "==", "pending_teacher"))),
     getDocs(collection(db, "classes")),
     getDocs(collection(db, "lectures")),
     getDocs(query(collection(db, "evaluations"), orderBy("submittedAt", "desc"), limit(200))),
+    getDocs(collection(db, "evaluationAudits")),
   ]);
 
   state.teachers = teacherSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -41,6 +42,15 @@ async function loadAdmin() {
   state.classes = classSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const lectures = lectureSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const evaluations = evalSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const evaluationAudits = evalAuditSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const auditByEvaluationId = new Map(evaluationAudits.map((a) => [a.id, a]));
+  const auditsByClassTeacher = new Map();
+  evaluationAudits.forEach((a) => {
+    const key = `${a.classId || ""}::${a.teacherId || ""}`;
+    if (!auditsByClassTeacher.has(key)) auditsByClassTeacher.set(key, []);
+    auditsByClassTeacher.get(key).push(a);
+  });
+  const usedAuditIds = new Set();
 
   qs("#teachersCount").textContent = String(state.teachers.length);
   qs("#classesCount").textContent = String(state.classes.length);
@@ -93,11 +103,29 @@ async function loadAdmin() {
       const teacher = state.teachers.find((t) => t.id === ev.teacherId);
       const scores = Object.values(ev.questionScores || {});
       const avg = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : "0.00";
+      let audit = auditByEvaluationId.get(ev.id);
+      if (!audit) {
+        const key = `${ev.classId || ""}::${ev.teacherId || ""}`;
+        const pool = (auditsByClassTeacher.get(key) || []).filter((a) => !usedAuditIds.has(a.id));
+        if (pool.length === 1) {
+          [audit] = pool;
+        } else if (pool.length > 1 && ev.submittedAt?.seconds) {
+          audit = pool
+            .slice()
+            .sort((a, b) => {
+              const aSec = Number(a.submittedAt?.seconds || 0);
+              const bSec = Number(b.submittedAt?.seconds || 0);
+              return Math.abs(aSec - ev.submittedAt.seconds) - Math.abs(bSec - ev.submittedAt.seconds);
+            })[0];
+        }
+      }
+      if (audit?.id) usedAuditIds.add(audit.id);
+      const studentLabel = audit?.studentName || audit?.studentKey || ev.studentName || ev.studentKey || "Unknown";
       return `<tr>
         <td>${escapeHtml(klass?.name || ev.classId)}</td>
         <td>${escapeHtml(teacher?.name || ev.teacherId)}</td>
         <td>${ev.anonymous ? "Yes" : "No"}</td>
-        <td>${ev.anonymous ? "Anonymous" : escapeHtml(ev.studentName || ev.studentKey || "-")}</td>
+        <td>${escapeHtml(studentLabel)}</td>
         <td>${avg}</td>
         <td>${fmtDate(ev.submittedAt)}</td>
       </tr>`;

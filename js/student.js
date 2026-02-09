@@ -17,6 +17,7 @@ import {
   limit,
   startAfter,
   writeBatch,
+  increment,
   ref,
   uploadBytes,
   getDownloadURL,
@@ -53,7 +54,7 @@ function keyForDoc(raw) {
 
 function classOptions(withAll = false) {
   const base = withAll ? ['<option value="">All classes</option>'] : ['<option value="">Select class</option>'];
-  return base.concat(state.classes.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`)).join("");
+  return base.concat(state.classes.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}${c.subject ? ` - ${escapeHtml(c.subject)}` : ""}</option>`)).join("");
 }
 
 function fillSelectors() {
@@ -66,7 +67,7 @@ function fillSelectors() {
 
 function renderMyClasses() {
   qs("#myClassesList").innerHTML = state.classes
-    .map((c) => `<article class="item"><h4>${escapeHtml(c.name)}</h4><p class="meta">${escapeHtml(c.semester)}</p></article>`)
+    .map((c) => `<article class="item"><h4>${escapeHtml(c.name)}</h4><p class="meta">${escapeHtml(c.subject || "No subject")} | ${escapeHtml(c.semester)}</p></article>`)
     .join("") || "<p>No enrolled classes.</p>";
 }
 
@@ -634,7 +635,7 @@ async function renderThreads() {
 
 function buildEvaluationForm() {
   const cls = `<label class="eval-control">Class<select id="evalClassId" required>${classOptions(false)}</select></label>`;
-  const anonymous = `<label class="eval-anon"><input id="evalAnonymous" type="checkbox" /> Submit anonymously</label>`;
+  const identityChoice = `<label class="eval-anon"><input id="evalRevealIdentity" type="checkbox" /> Show my identity to teacher</label>`;
   const wantedOrder = ["professional", "availability", "evaluation", "general"];
   const orderedSections = wantedOrder
     .map((k) => EVALUATION_SECTIONS.find((sec) => sec.key === k))
@@ -667,7 +668,7 @@ function buildEvaluationForm() {
   <p class="meta eval-note">Evaluation is optional and separate from quiz submission.</p>`;
   qs("#evaluationForm").innerHTML = `<div class="eval-top">
     ${cls}
-    ${anonymous}
+    ${identityChoice}
   </div>
   <div class="eval-grid eval-grid-4">${questionBlocks}</div>
   ${commentBlock}
@@ -677,51 +678,67 @@ function buildEvaluationForm() {
 
 async function submitEvaluation(e) {
   e.preventDefault();
-  const classId = qs("#evalClassId").value;
-  const klass = state.classes.find((c) => c.id === classId);
-  if (!klass) return;
-  const questionScores = {};
-  qsa("[data-eval-q]").forEach((el) => {
-    questionScores[el.dataset.evalQ] = Number(el.value);
-  });
-  if (Object.values(questionScores).some((v) => !v)) return alert("Rate every question.");
-  const comment = qs("#evalComment").value.trim();
-  if (!comment) return alert("Comment is required.");
-  const evalId = `${classId}_${keyForDoc(state.student.key)}`;
-  const evalRef = doc(db, "evaluations", evalId);
-  const existing = await getDoc(evalRef);
-  if (existing.exists()) return alert("You have already submitted evaluation for this class.");
+  try {
+    const classId = qs("#evalClassId").value;
+    const klass = state.classes.find((c) => c.id === classId);
+    if (!klass) return;
+    const questionScores = {};
+    qsa("[data-eval-q]").forEach((el) => {
+      questionScores[el.dataset.evalQ] = Number(el.value);
+    });
+    if (Object.values(questionScores).some((v) => !v)) return alert("Rate every question.");
+    const comment = qs("#evalComment").value.trim();
+    if (!comment) return alert("Comment is required.");
+    const evalId = `${classId}_${keyForDoc(state.student.key)}`;
+    const evalRef = doc(db, "evaluations", evalId);
+    const auditRef = doc(db, "evaluationAudits", evalId);
+    const statsRef = doc(db, "evaluationStats", classId);
 
-  const statsRef = doc(db, "evaluationStats", classId);
-  const statsSnap = await getDoc(statsRef);
-  const stats = statsSnap.exists() ? statsSnap.data() : {
-    classId,
-    teacherId: klass.teacherId,
-    count: 0,
-    questionTotals: {},
-  };
-  for (const [k, v] of Object.entries(questionScores)) {
-    stats.questionTotals[k] = Number(stats.questionTotals[k] || 0) + Number(v);
+    const revealIdentity = !!qs("#evalRevealIdentity")?.checked;
+    const anonymous = !revealIdentity;
+    const batch = writeBatch(db);
+    batch.set(evalRef, {
+      classId,
+      teacherId: klass.teacherId,
+      anonymous,
+      studentKey: anonymous ? null : state.student.key,
+      studentName: anonymous ? null : state.student.name,
+      studentRollNo: anonymous ? null : state.student.rollNo,
+      questionScores,
+      comment,
+      submittedAt: serverTimestamp(),
+    });
+    batch.set(auditRef, {
+      evaluationId: evalId,
+      classId,
+      teacherId: klass.teacherId,
+      studentKey: state.student.key,
+      studentName: state.student.name,
+      studentRollNo: state.student.rollNo,
+      submittedAt: serverTimestamp(),
+    });
+    const questionTotalsUpdate = {};
+    for (const [k, v] of Object.entries(questionScores)) {
+      questionTotalsUpdate[k] = increment(Number(v) || 0);
+    }
+    const statsUpdate = {
+      classId,
+      teacherId: klass.teacherId,
+      count: increment(1),
+      questionTotals: questionTotalsUpdate,
+      updatedAt: serverTimestamp(),
+    };
+    batch.set(statsRef, statsUpdate, { merge: true });
+    await batch.commit();
+    qs("#evaluationMsg").textContent = "Evaluation submitted.";
+    e.target.reset();
+  } catch (err) {
+    if (String(err?.code || "").includes("permission-denied")) {
+      qs("#evaluationMsg").textContent = "You already submitted evaluation for this class.";
+      return;
+    }
+    qs("#evaluationMsg").textContent = err?.message || "Could not submit evaluation.";
   }
-  stats.count = Number(stats.count || 0) + 1;
-  stats.updatedAt = serverTimestamp();
-
-  const anonymous = qs("#evalAnonymous").checked;
-  const batch = writeBatch(db);
-  batch.set(evalRef, {
-    classId,
-    teacherId: klass.teacherId,
-    anonymous,
-    studentKey: anonymous ? null : state.student.key,
-    studentName: anonymous ? null : state.student.name,
-    questionScores,
-    comment,
-    submittedAt: serverTimestamp(),
-  });
-  batch.set(statsRef, stats, { merge: true });
-  await batch.commit();
-  qs("#evaluationMsg").textContent = "Evaluation submitted.";
-  e.target.reset();
 }
 
 async function generateCertificate() {
