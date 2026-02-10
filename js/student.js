@@ -352,21 +352,6 @@ async function submitQuiz() {
 
   const attemptRef = doc(collection(db, "quizAttempts"));
   const analyticsRef = doc(db, "quizAnalytics", quiz.id);
-  const analyticsSnap = await getDoc(analyticsRef);
-  const analytics = analyticsSnap.exists() ? analyticsSnap.data() : {
-    quizId: quiz.id,
-    classId: quiz.classId,
-    teacherId: quiz.teacherId,
-    attempts: 0,
-    totalScore: 0,
-    totalGradable,
-    questionStats: quiz.questions.map(() => ({ correct: 0, total: 0 })),
-  };
-  const updatedQs = (analytics.questionStats || quiz.questions.map(() => ({ correct: 0, total: 0 })))
-    .map((s, i) => ({
-      correct: Number(s.correct || 0) + Number(questionResults[i]?.correct || 0),
-      total: Number(s.total || 0) + 1,
-    }));
 
   const progress = await updateProgress(quiz.classId, { points: POINTS.QUIZ_SUBMISSION, quizCount: 1 });
   const batch = writeBatch(db);
@@ -390,13 +375,14 @@ async function submitQuiz() {
     submittedAt: serverTimestamp(),
   });
   batch.set(analyticsRef, {
-    ...analytics,
-    attempts: Number(analytics.attempts || 0) + 1,
-    totalScore: Number(analytics.totalScore || 0) + score,
+    quizId: quiz.id,
+    classId: quiz.classId,
+    teacherId: quiz.teacherId,
+    attempts: increment(1),
+    totalScore: increment(score),
     totalGradable,
-    questionStats: updatedQs,
     updatedAt: serverTimestamp(),
-  });
+  }, { merge: true });
   batch.set(progress.progressRef, progress.next, { merge: true });
   await batch.commit();
 
