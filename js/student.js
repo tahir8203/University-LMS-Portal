@@ -48,6 +48,14 @@ function promptToText(html) {
   return div.textContent || div.innerText || "";
 }
 
+function normalizeMcqKey(raw) {
+  const n = Number(raw);
+  if (!Number.isInteger(n)) return null;
+  if (n >= 1 && n <= 4) return n;
+  if (n >= 0 && n <= 3) return n + 1;
+  return null;
+}
+
 function keyForDoc(raw) {
   return (raw || "").replace(/[^a-zA-Z0-9_-]/g, "_");
 }
@@ -108,10 +116,14 @@ function renderResultView(quiz, attempt) {
         <p class="meta">Theory response submitted (manual review only). ${awarded}</p>
       </div>`;
     }
-    const ok = Number(chosen) === Number(q.correctIndex);
+    const chosenKey = normalizeMcqKey(chosen);
+    const correctKey = normalizeMcqKey(q.correctIndex);
+    const chosenIdx = chosenKey != null ? chosenKey - 1 : -1;
+    const correctIdx = correctKey != null ? correctKey - 1 : -1;
+    const ok = chosenKey != null && correctKey != null && chosenKey === correctKey;
     return `<div class="item">
       <strong>Q${i + 1}: ${escapeHtml(promptToText(q.promptHtml || q.text || ""))}</strong>
-      <p class="${ok ? "ok" : "bad"}">Your answer: ${escapeHtml(q.options[chosen] || "Not answered")} | Correct: ${escapeHtml(q.options[q.correctIndex])} | Marks: ${ok ? 1 : 0}/1</p>
+      <p class="${ok ? "ok" : "bad"}">Your answer: ${escapeHtml(q.options[chosenIdx] || "Not answered")} | Correct: ${escapeHtml(q.options[correctIdx] || "-")} | Marks: ${ok ? 1 : 0}/1</p>
     </div>`;
   }).join("");
   const mcqScore = Number(attempt.mcqScore ?? attempt.score ?? 0);
@@ -268,9 +280,10 @@ function renderQuizAttemptArea() {
   const options = q.type === "theory"
     ? `<textarea id="theoryAnswer" rows="5" placeholder="Write your answer here...">${escapeHtml(String(quizRuntime.answers[quizRuntime.idx] || ""))}</textarea>`
     : q.options.map((opt, i) => {
-      const checked = quizRuntime.answers[quizRuntime.idx] === i ? "checked" : "";
+      const key = i + 1;
+      const checked = quizRuntime.answers[quizRuntime.idx] === key ? "checked" : "";
       const disabled = quizRuntime.lockedMcq[quizRuntime.idx] ? "disabled" : "";
-      return `<label><input type="radio" name="qopt" value="${i}" ${checked} ${disabled}/> ${escapeHtml(opt)}</label>`;
+      return `<label><input type="radio" name="qopt" value="${key}" ${checked} ${disabled}/> ${escapeHtml(opt)}</label>`;
     }).join("");
   qs("#quizAttemptArea").innerHTML = `<article class="item">
     <h4>${escapeHtml(quizRuntime.quiz.title)} | Time Left: <span id="quizTimeLeft">${quizRuntime.secondsLeft}</span>s</h4>
@@ -294,7 +307,7 @@ function renderQuizAttemptArea() {
   } else {
     qsa('input[name="qopt"]').forEach((r) => r.addEventListener("change", (e) => {
       if (quizRuntime.lockedMcq[quizRuntime.idx]) return;
-      quizRuntime.answers[quizRuntime.idx] = Number(e.target.value);
+      quizRuntime.answers[quizRuntime.idx] = normalizeMcqKey(e.target.value);
       quizRuntime.lockedMcq[quizRuntime.idx] = true;
       renderQuizAttemptArea();
     }));
@@ -339,7 +352,9 @@ async function submitQuiz() {
     let score = 0;
     const questionResults = quiz.questions.map((q, i) => {
       if (q.type === "theory") return { correct: 0, total: 0, theory: true };
-      const ok = Number(answers[i]) === Number(q.correctIndex);
+      const chosenKey = normalizeMcqKey(answers[i]);
+      const correctKey = normalizeMcqKey(q.correctIndex);
+      const ok = chosenKey != null && correctKey != null && chosenKey === correctKey;
       if (ok) score += 1;
       return { correct: ok ? 1 : 0, total: 1, theory: false };
     });

@@ -124,7 +124,7 @@ Supported roll header names: `rollNo`, `roll_no`, `roll`, `roll number`.
 ### `quizzes/{quizId}`
 - teacherId, classId, quizNumber (1-4), title, durationMin
 - status: `draft | published`
-- questions: `[{text, options[4], correctIndex}]`
+- questions: `[{text, options[4], correctIndex}]` (`correctIndex` uses 1-4)
 
 ### `quizAttempts/{quizId_studentKey}`
 - quizId, classId, teacherId

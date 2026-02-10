@@ -39,6 +39,14 @@ const state = {
   quizAttemptsReview: [],
 };
 
+function normalizeMcqKey(raw) {
+  const n = Number(raw);
+  if (!Number.isInteger(n)) return 1;
+  if (n >= 1 && n <= 4) return n;
+  if (n >= 0 && n <= 3) return n + 1;
+  return 1;
+}
+
 function normalizeQuestion(raw = {}) {
   const type = raw.type === "theory" ? "theory" : "mcq";
   const parsedMarks = Number(raw.maxMarks);
@@ -47,7 +55,7 @@ function normalizeQuestion(raw = {}) {
     type,
     promptHtml: raw.promptHtml || raw.text || "",
     options: Array.isArray(raw.options) ? raw.options.slice(0, 4).concat(["", "", "", ""]).slice(0, 4) : ["", "", "", ""],
-    correctIndex: Number.isFinite(Number(raw.correctIndex)) ? Number(raw.correctIndex) : 0,
+    correctIndex: normalizeMcqKey(raw.correctIndex),
     theoryAnswer: raw.theoryAnswer || "",
     imageDataUrl: raw.imageDataUrl || "",
     imageName: raw.imageName || "",
@@ -255,7 +263,7 @@ function renderQuestionBuilder() {
       ${q.imageDataUrl ? `<p><img src="${q.imageDataUrl}" alt="question image" style="max-width: 220px; border:1px solid #d9e0e6;" /></p>` : ""}
       ${q.type === "mcq" ? `
         ${mcqOptions}
-        <label>Correct Option Index (0-3)<input id="currentCorrectIndex" type="number" min="0" max="3" value="${q.correctIndex}" /></label>
+        <label>Correct Option Index (1-4)<input id="currentCorrectIndex" type="number" min="1" max="4" value="${q.correctIndex}" /></label>
       ` : `
         <label>Model Answer<textarea id="currentTheoryAnswer" rows="3">${escapeHtml(q.theoryAnswer || "")}</textarea></label>
       `}
@@ -351,7 +359,7 @@ function validateQuestions(questions, { strict = true } = {}) {
     if (!String(q.promptHtml || "").trim()) throw new Error("Each question prompt is required.");
     if (q.type === "mcq") {
       if ((q.options || []).some((o) => !String(o || "").trim())) throw new Error("All MCQ options are required.");
-      if (q.correctIndex < 0 || q.correctIndex > 3) throw new Error("MCQ correct index must be 0-3.");
+      if (q.correctIndex < 1 || q.correctIndex > 4) throw new Error("MCQ correct index must be 1-4.");
       if (Number(q.maxMarks) !== 1) throw new Error("MCQ marks must remain 1.");
     } else {
       if (!Number.isFinite(Number(q.maxMarks)) || Number(q.maxMarks) < 1) throw new Error("Each short question must have marks >= 1.");
@@ -497,11 +505,11 @@ function parsePastedQuestions(rawText) {
     }
     const isMcq = options.every((o) => o.trim());
     if (isMcq) {
-      let correctIndex = 0;
+      let correctIndex = 1;
       if (/^[A-Da-d]$/.test(answerRaw)) {
-        correctIndex = answerRaw.toUpperCase().charCodeAt(0) - 65;
+        correctIndex = (answerRaw.toUpperCase().charCodeAt(0) - 65) + 1;
       } else if (options.includes(answerRaw)) {
-        correctIndex = options.indexOf(answerRaw);
+        correctIndex = options.indexOf(answerRaw) + 1;
       }
       out.push(normalizeQuestion({ type: "mcq", promptHtml: prompt, options, correctIndex }));
     } else {
@@ -955,12 +963,13 @@ function wireStaticEvents() {
     const pickFirst = (...vals) => vals.map(toText).find(Boolean) || "";
     const parseCorrectIndex = (raw, options) => {
       const value = toText(raw);
-      if (!value) return 0;
-      if (/^[A-Da-d]$/.test(value)) return value.toUpperCase().charCodeAt(0) - 65;
+      if (!value) return 1;
+      if (/^[A-Da-d]$/.test(value)) return (value.toUpperCase().charCodeAt(0) - 65) + 1;
       const num = Number(value);
-      if (Number.isInteger(num) && num >= 0 && num <= 3) return num;
+      if (Number.isInteger(num) && num >= 1 && num <= 4) return num;
+      if (Number.isInteger(num) && num >= 0 && num <= 3) return num + 1;
       const byText = options.findIndex((o) => o && o.toLowerCase() === value.toLowerCase());
-      return byText >= 0 ? byText : 0;
+      return byText >= 0 ? byText + 1 : 1;
     };
     const inferType = (row, options, theoryAnswer) => {
       if (mode !== "mixed") return mode;
