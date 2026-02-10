@@ -335,74 +335,85 @@ async function submitQuiz() {
   runtime.submitting = true;
   const quiz = runtime.quiz;
   const answers = [...runtime.answers];
-  clearQuizRuntime();
-  let score = 0;
-  const questionResults = quiz.questions.map((q, i) => {
-    if (q.type === "theory") return { correct: 0, total: 0, theory: true };
-    const ok = Number(answers[i]) === Number(q.correctIndex);
-    if (ok) score += 1;
-    return { correct: ok ? 1 : 0, total: 1, theory: false };
-  });
-  const totalGradable = questionResults.filter((r) => !r.theory).length;
-  const totalTheoryPossible = quiz.questions
-    .filter((q) => q.type === "theory")
-    .reduce((sum, q) => sum + Number(q.maxMarks || 5), 0);
-  const totalPossible = totalGradable + totalTheoryPossible;
-  const mcqScore = score;
+  try {
+    let score = 0;
+    const questionResults = quiz.questions.map((q, i) => {
+      if (q.type === "theory") return { correct: 0, total: 0, theory: true };
+      const ok = Number(answers[i]) === Number(q.correctIndex);
+      if (ok) score += 1;
+      return { correct: ok ? 1 : 0, total: 1, theory: false };
+    });
+    const totalGradable = questionResults.filter((r) => !r.theory).length;
+    const totalTheoryPossible = quiz.questions
+      .filter((q) => q.type === "theory")
+      .reduce((sum, q) => sum + Number(q.maxMarks || 5), 0);
+    const totalPossible = totalGradable + totalTheoryPossible;
+    const mcqScore = score;
 
-  const attemptRef = doc(collection(db, "quizAttempts"));
-  const analyticsRef = doc(db, "quizAnalytics", quiz.id);
+    const attemptRef = doc(collection(db, "quizAttempts"));
+    const analyticsRef = doc(db, "quizAnalytics", quiz.id);
 
-  const progress = await updateProgress(quiz.classId, { points: POINTS.QUIZ_SUBMISSION, quizCount: 1 });
-  const batch = writeBatch(db);
-  batch.set(attemptRef, {
-    quizId: quiz.id,
-    classId: quiz.classId,
-    teacherId: quiz.teacherId,
-    attemptNo: runtime.attemptNo,
-    studentKey: state.student.key,
-    studentName: state.student.name,
-    studentRollNo: state.student.rollNo,
-    answers,
-    score: mcqScore,
-    mcqScore,
-    theoryScore: 0,
-    finalScore: mcqScore,
-    theoryPending: totalTheoryPossible > 0,
-    totalGradable,
-    totalTheoryPossible,
-    totalPossible,
-    submittedAt: serverTimestamp(),
-  });
-  batch.set(analyticsRef, {
-    quizId: quiz.id,
-    classId: quiz.classId,
-    teacherId: quiz.teacherId,
-    attempts: increment(1),
-    totalScore: increment(score),
-    totalGradable,
-    updatedAt: serverTimestamp(),
-  }, { merge: true });
-  batch.set(progress.progressRef, progress.next, { merge: true });
-  await batch.commit();
+    const progress = await updateProgress(quiz.classId, { points: POINTS.QUIZ_SUBMISSION, quizCount: 1 });
+    const batch = writeBatch(db);
+    batch.set(attemptRef, {
+      quizId: quiz.id,
+      classId: quiz.classId,
+      teacherId: quiz.teacherId,
+      attemptNo: runtime.attemptNo,
+      studentKey: state.student.key,
+      studentName: state.student.name,
+      studentRollNo: state.student.rollNo,
+      answers,
+      score: mcqScore,
+      mcqScore,
+      theoryScore: 0,
+      finalScore: mcqScore,
+      theoryPending: totalTheoryPossible > 0,
+      totalGradable,
+      totalTheoryPossible,
+      totalPossible,
+      submittedAt: serverTimestamp(),
+    });
+    batch.set(progress.progressRef, progress.next, { merge: true });
+    await batch.commit();
 
-  state.quizAttempts = [...state.quizAttempts, {
-    id: attemptRef.id,
-    quizId: quiz.id,
-    answers,
-    score: mcqScore,
-    mcqScore,
-    theoryScore: 0,
-    finalScore: mcqScore,
-    theoryPending: totalTheoryPossible > 0,
-    totalGradable,
-    totalTheoryPossible,
-    totalPossible,
-    attemptNo: runtime.attemptNo,
-  }];
-  renderQuizzesList();
-  qs("#quizAttemptArea").innerHTML = "<p class='ok'>Quiz submitted successfully.</p>";
-  await loadGamification();
+    try {
+      await setDoc(analyticsRef, {
+        quizId: quiz.id,
+        classId: quiz.classId,
+        teacherId: quiz.teacherId,
+        attempts: increment(1),
+        totalScore: increment(score),
+        totalGradable,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    } catch (err) {
+      console.warn("Quiz analytics update failed:", err);
+    }
+
+    clearQuizRuntime();
+    state.quizAttempts = [...state.quizAttempts, {
+      id: attemptRef.id,
+      quizId: quiz.id,
+      answers,
+      score: mcqScore,
+      mcqScore,
+      theoryScore: 0,
+      finalScore: mcqScore,
+      theoryPending: totalTheoryPossible > 0,
+      totalGradable,
+      totalTheoryPossible,
+      totalPossible,
+      attemptNo: runtime.attemptNo,
+    }];
+    renderQuizzesList();
+    qs("#quizAttemptArea").innerHTML = "<p class='ok'>Quiz submitted successfully.</p>";
+    await loadGamification();
+  } catch (err) {
+    runtime.submitting = false;
+    alert(err?.message || "Could not submit quiz.");
+    renderQuizAttemptArea();
+  }
 }
 
 async function loadQuizzesAndAttempts() {
