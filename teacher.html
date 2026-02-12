@@ -19,8 +19,33 @@
     </div>
   </header>
 
-  <main class="container">
-    <section class="card">
+  <main class="container dashboard-tabs-shell">
+    <section class="card tabs-nav-card">
+      <ul class="nav nav-pills portal-tabs" id="teacherPortalTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="teacher-classes-tab" data-bs-toggle="tab" data-bs-target="#teacher-classes-pane" type="button" role="tab" aria-controls="teacher-classes-pane" aria-selected="true">Classes & Enrollment</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="teacher-lectures-tab" data-bs-toggle="tab" data-bs-target="#teacher-lectures-pane" type="button" role="tab" aria-controls="teacher-lectures-pane" aria-selected="false">Lectures Delivered</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="teacher-quizzes-tab" data-bs-toggle="tab" data-bs-target="#teacher-quizzes-pane" type="button" role="tab" aria-controls="teacher-quizzes-pane" aria-selected="false">Quizzes & Analytics</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="teacher-assignments-tab" data-bs-toggle="tab" data-bs-target="#teacher-assignments-pane" type="button" role="tab" aria-controls="teacher-assignments-pane" aria-selected="false">Assignments</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="teacher-evaluation-tab" data-bs-toggle="tab" data-bs-target="#teacher-evaluation-pane" type="button" role="tab" aria-controls="teacher-evaluation-pane" aria-selected="false">Teacher Evaluation</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="teacher-announcements-tab" data-bs-toggle="tab" data-bs-target="#teacher-announcements-pane" type="button" role="tab" aria-controls="teacher-announcements-pane" aria-selected="false">Discussion Announcements</button>
+        </li>
+      </ul>
+    </section>
+
+    <section class="tab-content portal-tab-content" id="teacherPortalTabsContent">
+      <div class="tab-pane fade show active" id="teacher-classes-pane" role="tabpanel" aria-labelledby="teacher-classes-tab" tabindex="0">
+        <section class="card">
       <h2>Classes & Enrollment</h2>
       <form id="classForm" class="grid two">
         <input id="className" placeholder="Class name (e.g., BSCS-5A)" required />
@@ -35,9 +60,11 @@
       </form>
       <p id="classEnrollMsg" class="message"></p>
       <div id="classesList" class="list"></div>
-    </section>
+        </section>
+      </div>
 
-    <section class="card">
+      <div class="tab-pane fade" id="teacher-lectures-pane" role="tabpanel" aria-labelledby="teacher-lectures-tab" tabindex="0">
+        <section class="card">
       <h2>Lectures Delivered</h2>
       <form id="lectureForm" class="grid two">
         <select id="lectureClassId" required></select>
@@ -49,9 +76,11 @@
       </form>
       <input id="lectureId" type="hidden" />
       <div id="lecturesList" class="list"></div>
-    </section>
+        </section>
+      </div>
 
-    <section class="card">
+      <div class="tab-pane fade" id="teacher-quizzes-pane" role="tabpanel" aria-labelledby="teacher-quizzes-tab" tabindex="0">
+        <section class="card">
       <h2>Quizzes (1-4 per class)</h2>
       <p class="meta">Workflow: select class/quiz -> add/edit questions -> auto-save draft -> publish -> start/stop attempts.</p>
       <div class="quiz-shell">
@@ -141,9 +170,11 @@
         <summary><strong>Quiz Attempt Reviews (Short Questions)</strong></summary>
         <div id="quizAttemptReviewsList" class="list"></div>
       </details>
-    </section>
+        </section>
+      </div>
 
-    <section class="card">
+      <div class="tab-pane fade" id="teacher-assignments-pane" role="tabpanel" aria-labelledby="teacher-assignments-tab" tabindex="0">
+        <section class="card">
       <h2>Assignments</h2>
       <form id="assignmentForm" class="grid two">
         <select id="assignmentClassId" required></select>
@@ -159,14 +190,18 @@
         <button type="submit">Create Assignment</button>
       </form>
       <div id="assignmentsList" class="list"></div>
-    </section>
+        </section>
+      </div>
 
-    <section class="card">
+      <div class="tab-pane fade" id="teacher-evaluation-pane" role="tabpanel" aria-labelledby="teacher-evaluation-tab" tabindex="0">
+        <section class="card">
       <h2>Teacher Evaluation (Aggregated Only)</h2>
       <div id="evaluationStatsList" class="list"></div>
-    </section>
+        </section>
+      </div>
 
-    <section class="card">
+      <div class="tab-pane fade" id="teacher-announcements-pane" role="tabpanel" aria-labelledby="teacher-announcements-tab" tabindex="0">
+        <section class="card">
       <h2>Discussion Announcements</h2>
       <form id="announcementForm" class="grid two">
         <select id="announcementClassId" required></select>
@@ -175,6 +210,8 @@
         <button type="submit">Post Announcement</button>
       </form>
       <div id="announcementList" class="list"></div>
+        </section>
+      </div>
     </section>
   </main>
 

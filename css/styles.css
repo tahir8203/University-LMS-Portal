@@ -852,3 +852,73 @@ summary {
     border-radius: 14px;
   }
 }
+
+.dashboard-tabs-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.tabs-nav-card {
+  position: sticky;
+  top: 76px;
+  z-index: 16;
+  padding: 10px;
+}
+
+.portal-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.portal-tabs .nav-item {
+  flex: 0 0 auto;
+}
+
+.portal-tabs .nav-link {
+  border: 1px solid #c7dbf3;
+  border-radius: 999px;
+  padding: 9px 14px;
+  background: linear-gradient(180deg, #f9fbff, #eaf3ff);
+  color: #1a4778;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.portal-tabs .nav-link.active {
+  background: linear-gradient(135deg, #0d67c9, #0b4f9e);
+  border-color: #0b5ab3;
+  color: #fff;
+  box-shadow: 0 10px 20px rgba(15, 85, 168, 0.28);
+}
+
+.portal-tab-content .tab-pane > .card {
+  animation: paneFade 180ms ease;
+}
+
+@keyframes paneFade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 760px) {
+  .tabs-nav-card {
+    top: 8px;
+    padding: 8px;
+  }
+
+  .portal-tabs .nav-link {
+    padding: 8px 12px;
+    font-size: 0.86rem;
+  }
+}
