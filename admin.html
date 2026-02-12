@@ -19,36 +19,73 @@
     </div>
   </header>
 
-  <main class="container">
-    <section class="grid three">
-      <article class="card stat"><h3>Teachers</h3><p id="teachersCount">0</p></article>
-      <article class="card stat"><h3>Classes</h3><p id="classesCount">0</p></article>
-      <article class="card stat"><h3>Lectures</h3><p id="lecturesCount">0</p></article>
+  <main class="container dashboard-tabs-shell">
+    <section class="card tabs-nav-card">
+      <ul class="nav nav-pills portal-tabs" id="adminPortalTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="admin-overview-tab" data-bs-toggle="tab" data-bs-target="#admin-overview-pane" type="button" role="tab" aria-controls="admin-overview-pane" aria-selected="true">Overview</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="admin-teachers-tab" data-bs-toggle="tab" data-bs-target="#admin-teachers-pane" type="button" role="tab" aria-controls="admin-teachers-pane" aria-selected="false">Teachers</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="admin-approvals-tab" data-bs-toggle="tab" data-bs-target="#admin-approvals-pane" type="button" role="tab" aria-controls="admin-approvals-pane" aria-selected="false">Approvals</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="admin-classes-tab" data-bs-toggle="tab" data-bs-target="#admin-classes-pane" type="button" role="tab" aria-controls="admin-classes-pane" aria-selected="false">Classes</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="admin-lectures-tab" data-bs-toggle="tab" data-bs-target="#admin-lectures-pane" type="button" role="tab" aria-controls="admin-lectures-pane" aria-selected="false">Lectures</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="admin-evaluations-tab" data-bs-toggle="tab" data-bs-target="#admin-evaluations-pane" type="button" role="tab" aria-controls="admin-evaluations-pane" aria-selected="false">Evaluations</button>
+        </li>
+      </ul>
     </section>
 
-    <section class="card">
-      <h2>Teachers (Read-only)</h2>
-      <div class="table-wrap"><table id="teachersTable"><thead><tr><th>Name</th><th>Email</th></tr></thead><tbody></tbody></table></div>
-    </section>
+    <section class="tab-content portal-tab-content" id="adminPortalTabsContent">
+      <div class="tab-pane fade show active" id="admin-overview-pane" role="tabpanel" aria-labelledby="admin-overview-tab" tabindex="0">
+        <section class="grid three">
+          <article class="card stat"><h3>Teachers</h3><p id="teachersCount">0</p></article>
+          <article class="card stat"><h3>Classes</h3><p id="classesCount">0</p></article>
+          <article class="card stat"><h3>Lectures</h3><p id="lecturesCount">0</p></article>
+        </section>
+      </div>
 
-    <section class="card">
-      <h2>Teacher Approval Requests</h2>
-      <div class="table-wrap"><table id="pendingTeachersTable"><thead><tr><th>Name</th><th>Email</th><th>Requested</th><th>Action</th></tr></thead><tbody></tbody></table></div>
-    </section>
+      <div class="tab-pane fade" id="admin-teachers-pane" role="tabpanel" aria-labelledby="admin-teachers-tab" tabindex="0">
+        <section class="card">
+          <h2>Teachers (Read-only)</h2>
+          <div class="table-wrap"><table id="teachersTable"><thead><tr><th>Name</th><th>Email</th></tr></thead><tbody></tbody></table></div>
+        </section>
+      </div>
 
-    <section class="card">
-      <h2>Classes (Read-only)</h2>
-      <div class="table-wrap"><table id="classesTable"><thead><tr><th>Class</th><th>Semester</th><th>Teacher</th><th>Created</th></tr></thead><tbody></tbody></table></div>
-    </section>
+      <div class="tab-pane fade" id="admin-approvals-pane" role="tabpanel" aria-labelledby="admin-approvals-tab" tabindex="0">
+        <section class="card">
+          <h2>Teacher Approval Requests</h2>
+          <div class="table-wrap"><table id="pendingTeachersTable"><thead><tr><th>Name</th><th>Email</th><th>Requested</th><th>Action</th></tr></thead><tbody></tbody></table></div>
+        </section>
+      </div>
 
-    <section class="card">
-      <h2>Lectures Delivered (Read-only)</h2>
-      <div class="table-wrap"><table id="lecturesTable"><thead><tr><th>Class</th><th>Title</th><th>Date</th><th>Teacher</th></tr></thead><tbody></tbody></table></div>
-    </section>
+      <div class="tab-pane fade" id="admin-classes-pane" role="tabpanel" aria-labelledby="admin-classes-tab" tabindex="0">
+        <section class="card">
+          <h2>Classes (Read-only)</h2>
+          <div class="table-wrap"><table id="classesTable"><thead><tr><th>Class</th><th>Semester</th><th>Teacher</th><th>Created</th></tr></thead><tbody></tbody></table></div>
+        </section>
+      </div>
 
-    <section class="card">
-      <h2>Teacher Evaluations (Full Data)</h2>
-      <div class="table-wrap"><table id="evaluationsTable"><thead><tr><th>Class</th><th>Teacher</th><th>Anonymous</th><th>Student</th><th>Avg</th><th>Submitted</th></tr></thead><tbody></tbody></table></div>
+      <div class="tab-pane fade" id="admin-lectures-pane" role="tabpanel" aria-labelledby="admin-lectures-tab" tabindex="0">
+        <section class="card">
+          <h2>Lectures Delivered (Read-only)</h2>
+          <div class="table-wrap"><table id="lecturesTable"><thead><tr><th>Class</th><th>Title</th><th>Date</th><th>Teacher</th></tr></thead><tbody></tbody></table></div>
+        </section>
+      </div>
+
+      <div class="tab-pane fade" id="admin-evaluations-pane" role="tabpanel" aria-labelledby="admin-evaluations-tab" tabindex="0">
+        <section class="card">
+          <h2>Teacher Evaluations (Full Data)</h2>
+          <div class="table-wrap"><table id="evaluationsTable"><thead><tr><th>Class</th><th>Teacher</th><th>Anonymous</th><th>Student</th><th>Avg</th><th>Submitted</th></tr></thead><tbody></tbody></table></div>
+        </section>
+      </div>
     </section>
   </main>
 
