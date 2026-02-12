@@ -58,6 +58,17 @@
         <input id="csvFile" type="file" accept=".csv" required />
         <button type="submit">Upload CSV & Enroll</button>
       </form>
+      <p class="meta">CSV headers: <code>rollNo,name,password(optional)</code>. If password is blank, a secure password is auto-generated.</p>
+      <div class="inline-actions template-downloads">
+        <a class="button-link" href="./templates/student-enrollment-template.csv" download>Download Enrollment CSV Template</a>
+      </div>
+      <details id="enrollCredentialsPanel" class="hidden">
+        <summary><strong>Generated Student Login Credentials</strong></summary>
+        <div class="inline-actions">
+          <button id="downloadEnrollCredentialsBtn" type="button">Download Credentials CSV</button>
+        </div>
+        <div id="enrollCredentialsList" class="table-wrap"></div>
+      </details>
       <p id="classEnrollMsg" class="message"></p>
       <div id="classesList" class="list"></div>
         </section>

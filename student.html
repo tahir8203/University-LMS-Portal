@@ -43,6 +43,9 @@
         <li class="nav-item" role="presentation">
           <button class="nav-link" id="student-certificate-tab" data-bs-toggle="tab" data-bs-target="#student-certificate-pane" type="button" role="tab" aria-controls="student-certificate-pane" aria-selected="false">Certificate & Gamification</button>
         </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="student-security-tab" data-bs-toggle="tab" data-bs-target="#student-security-pane" type="button" role="tab" aria-controls="student-security-pane" aria-selected="false">Security</button>
+        </li>
       </ul>
     </section>
 
@@ -112,6 +115,20 @@
       <button id="generateCertificateBtn" type="button">Generate Certificate</button>
       <p id="certificateMsg" class="message"></p>
       <div id="gamificationView"></div>
+        </section>
+      </div>
+
+      <div class="tab-pane fade" id="student-security-pane" role="tabpanel" aria-labelledby="student-security-tab" tabindex="0">
+        <section class="card">
+      <h2>Account Security</h2>
+      <p id="passwordPolicyNote" class="meta">Use a unique password with at least 6 characters.</p>
+      <form id="studentPasswordForm" class="grid two">
+        <input id="currentStudentPassword" type="password" minlength="6" placeholder="Current password" required />
+        <input id="newStudentPassword" type="password" minlength="6" placeholder="New password" required />
+        <input id="confirmStudentPassword" type="password" minlength="6" placeholder="Confirm new password" required />
+        <button type="submit">Change Password</button>
+      </form>
+      <p id="studentPasswordMsg" class="message"></p>
         </section>
       </div>
     </section>

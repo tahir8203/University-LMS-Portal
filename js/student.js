@@ -1,4 +1,4 @@
-import { requireStudentSession, logoutStudent } from "./auth.js";
+import { requireStudentSession, logoutStudent, changeStudentPassword } from "./auth.js";
 import { EVALUATION_SECTIONS, BADGE_RULES, POINTS } from "./constants.js";
 import { qs, qsa, fmtDate, escapeHtml } from "./utils.js";
 import {
@@ -793,6 +793,43 @@ async function loadGamification() {
   qs("#gamificationView").innerHTML = `<p><strong>Points:</strong> ${points}</p><p><strong>Badges:</strong> ${Array.from(badges).join(", ") || "None"}</p>`;
 }
 
+function wirePasswordChange() {
+  const form = qs("#studentPasswordForm");
+  const msg = qs("#studentPasswordMsg");
+  const note = qs("#passwordPolicyNote");
+  if (!form || !msg) return;
+  if (state.student.mustChangePassword && note) {
+    note.innerHTML = "<strong>Action required:</strong> change your temporary password before continuing regular usage.";
+  }
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const current = qs("#currentStudentPassword").value;
+    const next = qs("#newStudentPassword").value;
+    const confirm = qs("#confirmStudentPassword").value;
+    if (next.length < 6) {
+      msg.textContent = "New password must be at least 6 characters.";
+      return;
+    }
+    if (next !== confirm) {
+      msg.textContent = "New password and confirmation do not match.";
+      return;
+    }
+    if (next === current) {
+      msg.textContent = "Use a different password than current.";
+      return;
+    }
+    try {
+      msg.textContent = "Updating password...";
+      await changeStudentPassword(state.student.id, current, next);
+      state.student.mustChangePassword = false;
+      msg.textContent = "Password updated successfully.";
+      form.reset();
+    } catch (err) {
+      msg.textContent = err?.message || "Could not change password.";
+    }
+  });
+}
+
 async function boot() {
   state.student = requireStudentSession();
   state.studentId = state.student.rollNo.trim().toLowerCase().replaceAll(" ", "_");
@@ -831,6 +868,7 @@ async function boot() {
   qs("#nextThreadsBtn").addEventListener("click", async () => loadThreads("next"));
   qs("#announceBtn").classList.add("hidden");
   qs("#generateCertificateBtn").addEventListener("click", generateCertificate);
+  wirePasswordChange();
 }
 
 boot().catch((err) => alert(err.message));

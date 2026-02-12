@@ -40,6 +40,9 @@
         <li class="nav-item" role="presentation">
           <button class="nav-link" id="admin-evaluations-tab" data-bs-toggle="tab" data-bs-target="#admin-evaluations-pane" type="button" role="tab" aria-controls="admin-evaluations-pane" aria-selected="false">Evaluations</button>
         </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="admin-student-accounts-tab" data-bs-toggle="tab" data-bs-target="#admin-student-accounts-pane" type="button" role="tab" aria-controls="admin-student-accounts-pane" aria-selected="false">Student Accounts</button>
+        </li>
       </ul>
     </section>
 
@@ -84,6 +87,30 @@
         <section class="card">
           <h2>Teacher Evaluations (Full Data)</h2>
           <div class="table-wrap"><table id="evaluationsTable"><thead><tr><th>Class</th><th>Teacher</th><th>Anonymous</th><th>Student</th><th>Avg</th><th>Submitted</th></tr></thead><tbody></tbody></table></div>
+        </section>
+      </div>
+
+      <div class="tab-pane fade" id="admin-student-accounts-pane" role="tabpanel" aria-labelledby="admin-student-accounts-tab" tabindex="0">
+        <section class="card">
+          <h2>Student Login Accounts</h2>
+          <p class="meta">Admin can view current student passwords and reset them if students forget or change credentials.</p>
+          <div class="table-wrap">
+            <table id="studentAccountsTable">
+              <thead>
+                <tr>
+                  <th>Class</th>
+                  <th>Teacher</th>
+                  <th>Student</th>
+                  <th>Roll No</th>
+                  <th>Current Password</th>
+                  <th>Must Change</th>
+                  <th>Reset Password</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </section>
       </div>
     </section>

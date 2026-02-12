@@ -48,6 +48,18 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
+    match /studentAuth/{studentId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.studentId == studentId
+        && request.resource.data.rollNo is string
+        && request.resource.data.studentName is string
+        && request.resource.data.passwordSalt is string
+        && request.resource.data.passwordHash is string
+        && request.resource.data.passwordPlain is string
+        && request.resource.data.mustChangePassword is bool;
+      allow delete: if isAdmin();
+    }
+
     match /classes/{classId} {
       allow read: if true;
       allow create, update: if isTeacher() && request.resource.data.teacherId == request.auth.uid;

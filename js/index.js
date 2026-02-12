@@ -13,6 +13,7 @@ const studentTeacher = qs("#studentTeacher");
 const studentCourse = qs("#studentCourse");
 const studentNameSelect = qs("#studentNameSelect");
 const studentRollSelect = qs("#studentRollSelect");
+const studentPassword = qs("#studentPassword");
 
 const studentPicker = {
   classes: [],
@@ -63,6 +64,7 @@ function renderCourseOptions(teacherId) {
   setSelect(studentCourse, rows, "Select class", !teacherId || rows.length === 0);
   setSelect(studentNameSelect, [], "Select student", true);
   setSelect(studentRollSelect, [], "Select roll number", true);
+  studentPassword.value = "";
   studentPicker.selectedStudents = [];
 }
 
@@ -128,11 +130,13 @@ studentCourse.addEventListener("change", async () => {
 studentNameSelect.addEventListener("change", () => {
   if (!studentNameSelect.value) return;
   studentRollSelect.value = studentNameSelect.value;
+  studentPassword.value = "";
 });
 
 studentRollSelect.addEventListener("change", () => {
   if (!studentRollSelect.value) return;
   studentNameSelect.value = studentRollSelect.value;
+  studentPassword.value = "";
 });
 
 staffLoginForm.addEventListener("submit", async (e) => {
@@ -164,7 +168,7 @@ studentLoginForm.addEventListener("submit", async (e) => {
     if (!studentTeacher.value) throw new Error("Select teacher.");
     if (!studentCourse.value) throw new Error("Select class.");
     if (!selected) throw new Error("Select student name and roll number.");
-    await loginStudentByRollName(selected.rollNo, selected.studentName);
+    await loginStudentByRollName(selected.rollNo, selected.studentName, studentPassword.value);
     window.location.href = "./student.html";
   } catch (err) {
     setText(msg, explainAuthError(err));

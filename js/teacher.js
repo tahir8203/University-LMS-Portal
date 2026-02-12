@@ -1,4 +1,4 @@
-import { requireStaffRole, logoutStaff } from "./auth.js";
+import { requireStaffRole, logoutStaff, generateStudentPassword, setStudentPasswordRecord } from "./auth.js";
 import { parseCSV, qs, qsa, fmtDate, escapeHtml } from "./utils.js";
 import {
   db,
@@ -37,6 +37,7 @@ const state = {
   draftDirty: false,
   lastDraftHash: "",
   quizAttemptsReview: [],
+  lastEnrollCredentials: [],
 };
 
 function normalizeMcqKey(raw) {
@@ -114,6 +115,59 @@ function renderQuizBuilderStats() {
 function setClassEnrollMsg(text) {
   const el = qs("#classEnrollMsg");
   if (el) el.textContent = text;
+}
+
+function escapeCsvCell(value) {
+  const text = String(value ?? "");
+  if (/[",\r\n]/.test(text)) return `"${text.replaceAll('"', '""')}"`;
+  return text;
+}
+
+function renderEnrollCredentials() {
+  const panel = qs("#enrollCredentialsPanel");
+  const list = qs("#enrollCredentialsList");
+  if (!panel || !list) return;
+  if (!state.lastEnrollCredentials.length) {
+    panel.classList.add("hidden");
+    list.innerHTML = "";
+    return;
+  }
+  panel.classList.remove("hidden");
+  list.innerHTML = `<table>
+    <thead><tr><th>Class</th><th>Student</th><th>Roll No</th><th>Password</th></tr></thead>
+    <tbody>
+      ${state.lastEnrollCredentials.map((r) => `<tr>
+        <td>${escapeHtml(r.className || "-")}</td>
+        <td>${escapeHtml(r.studentName)}</td>
+        <td>${escapeHtml(r.rollNo)}</td>
+        <td><code>${escapeHtml(r.password)}</code></td>
+      </tr>`).join("")}
+    </tbody>
+  </table>`;
+}
+
+function downloadEnrollCredentialsCsv() {
+  if (!state.lastEnrollCredentials.length) {
+    alert("No generated credentials found.");
+    return;
+  }
+  const lines = [
+    "className,studentName,rollNo,password",
+    ...state.lastEnrollCredentials.map((r) => [
+      escapeCsvCell(r.className || ""),
+      escapeCsvCell(r.studentName),
+      escapeCsvCell(r.rollNo),
+      escapeCsvCell(r.password),
+    ].join(",")),
+  ];
+  const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `student-login-credentials-${Date.now()}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
 }
 
 function fillClassSelects() {
@@ -801,6 +855,7 @@ function wireStaticEvents() {
     await logoutStaff();
     window.location.href = "./index.html";
   });
+  qs("#downloadEnrollCredentialsBtn")?.addEventListener("click", downloadEnrollCredentialsCsv);
 
   qs("#classForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -847,19 +902,37 @@ function wireStaticEvents() {
         setClassEnrollMsg("CSV is empty or invalid.");
         return;
       }
+      const selectedClass = state.classes.find((c) => c.id === classId);
       let enrolled = 0;
+      const credentials = [];
       for (const row of rows) {
         const rollNo = row.rollno || row.roll_no || row.roll || row["roll number"] || "";
         const name = row.name || row.student || "";
+        const rawPassword = row.password || row.pass || row["login password"] || "";
         if (!rollNo || !name) continue;
         const studentId = rollNo.trim().toLowerCase().replaceAll(" ", "_");
+        const manualPassword = String(rawPassword || "").trim();
+        const authRef = doc(db, "studentAuth", studentId);
+        const existingAuthSnap = await getDoc(authRef);
+        const existingAuth = existingAuthSnap.exists() ? existingAuthSnap.data() : null;
+        const loginPassword = manualPassword || existingAuth?.passwordPlain || generateStudentPassword();
         await setDoc(doc(db, "students", studentId), {
           rollNo: rollNo.trim(),
           name: name.trim(),
           nameLower: name.trim().toLowerCase(),
         }, { merge: true });
+        const shouldResetPassword = !existingAuth || !!manualPassword || !existingAuth?.passwordPlain;
+        if (shouldResetPassword) {
+          await setStudentPasswordRecord(studentId, {
+            rollNo: rollNo.trim(),
+            studentName: name.trim(),
+            password: loginPassword,
+            changedByRole: "teacher",
+            changedById: state.me.uid,
+            mustChangePassword: true,
+          });
+        }
         const enrollmentId = `${classId}_${studentId}`;
-        const selectedClass = state.classes.find((c) => c.id === classId);
         await setDoc(doc(db, "enrollments", enrollmentId), {
           classId,
           className: selectedClass?.name || "",
@@ -870,10 +943,18 @@ function wireStaticEvents() {
           studentName: name.trim(),
           createdAt: serverTimestamp(),
         });
+        credentials.push({
+          className: selectedClass?.name || "",
+          studentName: name.trim(),
+          rollNo: rollNo.trim(),
+          password: loginPassword,
+        });
         enrolled += 1;
       }
+      state.lastEnrollCredentials = credentials;
+      renderEnrollCredentials();
       e.target.reset();
-      setClassEnrollMsg(`Enrollment upload complete. ${enrolled} student(s) processed.`);
+      setClassEnrollMsg(`Enrollment upload complete. ${enrolled} student(s) processed. Login passwords are generated and stored.`);
     } catch (err) {
       setClassEnrollMsg(err.message || "Enrollment upload failed.");
     }

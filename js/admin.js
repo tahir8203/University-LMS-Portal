@@ -1,4 +1,4 @@
-import { requireStaffRole, logoutStaff } from "./auth.js";
+import { requireStaffRole, logoutStaff, generateStudentPassword, setStudentPasswordRecord } from "./auth.js";
 import { qs, fmtDate, escapeHtml } from "./utils.js";
 import {
   db,
@@ -17,6 +17,7 @@ const state = {
   teachers: [],
   pendingTeachers: [],
   classes: [],
+  studentAccounts: [],
 };
 
 async function loadAdmin() {
@@ -28,13 +29,15 @@ async function loadAdmin() {
     window.location.href = "./index.html";
   });
 
-  const [teacherSnap, pendingSnap, classSnap, lectureSnap, evalSnap, evalAuditSnap] = await Promise.all([
+  const [teacherSnap, pendingSnap, classSnap, lectureSnap, evalSnap, evalAuditSnap, enrollSnap, studentAuthSnap] = await Promise.all([
     getDocs(query(collection(db, "users"), where("role", "==", "teacher"))),
     getDocs(query(collection(db, "users"), where("role", "==", "pending_teacher"))),
     getDocs(collection(db, "classes")),
     getDocs(collection(db, "lectures")),
     getDocs(query(collection(db, "evaluations"), orderBy("submittedAt", "desc"), limit(200))),
     getDocs(collection(db, "evaluationAudits")),
+    getDocs(collection(db, "enrollments")),
+    getDocs(collection(db, "studentAuth")),
   ]);
 
   state.teachers = teacherSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -43,7 +46,12 @@ async function loadAdmin() {
   const lectures = lectureSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const evaluations = evalSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const evaluationAudits = evalAuditSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const enrollments = enrollSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const studentAuth = studentAuthSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const auditByEvaluationId = new Map(evaluationAudits.map((a) => [a.id, a]));
+  const classById = new Map(state.classes.map((c) => [c.id, c]));
+  const teacherById = new Map(state.teachers.map((t) => [t.id, t]));
+  const authByStudentId = new Map(studentAuth.map((a) => [a.studentId || a.id, a]));
   const auditsByClassTeacher = new Map();
   evaluationAudits.forEach((a) => {
     const key = `${a.classId || ""}::${a.teacherId || ""}`;
@@ -132,7 +140,38 @@ async function loadAdmin() {
     })
     .join("");
 
+  state.studentAccounts = enrollments.map((en) => {
+    const klass = classById.get(en.classId);
+    const teacher = teacherById.get(en.teacherId);
+    const authRow = authByStudentId.get(en.studentId) || null;
+    return {
+      enrollmentId: en.id,
+      studentId: en.studentId,
+      classId: en.classId,
+      className: en.className || klass?.name || en.classId,
+      teacherName: teacher?.name || en.teacherId || "-",
+      studentName: en.studentName || authRow?.studentName || "-",
+      rollNo: en.rollNo || authRow?.rollNo || "-",
+      passwordPlain: authRow?.passwordPlain || "-",
+      mustChangePassword: authRow?.mustChangePassword !== false,
+    };
+  }).sort((a, b) => `${a.className}_${a.studentName}`.localeCompare(`${b.className}_${b.studentName}`));
+
+  qs("#studentAccountsTable tbody").innerHTML = state.studentAccounts
+    .map((s) => `<tr>
+      <td>${escapeHtml(s.className)}</td>
+      <td>${escapeHtml(s.teacherName)}</td>
+      <td>${escapeHtml(s.studentName)}</td>
+      <td>${escapeHtml(s.rollNo)}</td>
+      <td><code>${escapeHtml(s.passwordPlain)}</code></td>
+      <td>${s.mustChangePassword ? "Yes" : "No"}</td>
+      <td><input data-admin-reset-pass="${s.enrollmentId}" type="text" placeholder="Leave blank for auto password" /></td>
+      <td><button data-admin-reset-btn="${s.enrollmentId}" type="button">Reset</button></td>
+    </tr>`)
+    .join("") || "<tr><td colspan='8'>No student accounts found.</td></tr>";
+
   wireApprovalActions();
+  wireStudentResetActions();
 }
 
 function wireApprovalActions() {
@@ -156,6 +195,33 @@ function wireApprovalActions() {
         approved: false,
         approvedBy: state.me.uid,
       });
+      await loadAdmin();
+    });
+  });
+}
+
+function wireStudentResetActions() {
+  document.querySelectorAll("[data-admin-reset-btn]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const enrollmentId = btn.dataset.adminResetBtn;
+      const row = state.studentAccounts.find((s) => s.enrollmentId === enrollmentId);
+      if (!row) return;
+      const input = document.querySelector(`[data-admin-reset-pass="${enrollmentId}"]`);
+      const manual = String(input?.value || "").trim();
+      const nextPassword = manual || generateStudentPassword();
+      if (nextPassword.length < 6) {
+        alert("Password must be at least 6 characters.");
+        return;
+      }
+      await setStudentPasswordRecord(row.studentId, {
+        rollNo: row.rollNo,
+        studentName: row.studentName,
+        password: nextPassword,
+        mustChangePassword: true,
+        changedByRole: "admin",
+        changedById: state.me.uid,
+      });
+      alert(`Password reset for ${row.studentName}. New password: ${nextPassword}`);
       await loadAdmin();
     });
   });
