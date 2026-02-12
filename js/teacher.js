@@ -960,11 +960,33 @@ function wireStaticEvents() {
     const text = await file.text();
     const rows = parseCSV(text);
     const toText = (v) => String(v ?? "").trim();
-    const pickFirst = (...vals) => vals.map(toText).find(Boolean) || "";
+    const keyNorm = (k) => String(k ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const pickFromRow = (row, ...aliases) => {
+      const normalizedEntries = Object.entries(row || {}).map(([k, v]) => [keyNorm(k), v]);
+      const normalized = Object.fromEntries(normalizedEntries);
+      for (const alias of aliases) {
+        const normAlias = keyNorm(alias);
+        let value = toText(normalized[normAlias]);
+        if (!value) {
+          const fuzzy = normalizedEntries.find(([k]) => k.startsWith(normAlias) || normAlias.startsWith(k));
+          value = toText(fuzzy?.[1]);
+        }
+        if (value) return value;
+      }
+      return "";
+    };
     const parseCorrectIndex = (raw, options) => {
       const value = toText(raw);
       if (!value) return 1;
       if (/^[A-Da-d]$/.test(value)) return (value.toUpperCase().charCodeAt(0) - 65) + 1;
+      const withLetter = value.match(/\b([A-Da-d])\b/);
+      if (withLetter) return (withLetter[1].toUpperCase().charCodeAt(0) - 65) + 1;
+      const optionLetter = value.match(/(?:option|opt)\s*([A-Da-d])/i);
+      if (optionLetter) return (optionLetter[1].toUpperCase().charCodeAt(0) - 65) + 1;
+      const optionNumber = value.match(/(?:option|opt|index|idx)\s*([1-4])/i);
+      if (optionNumber) return Number(optionNumber[1]);
+      const digit = value.match(/[1-4]/);
+      if (digit) return Number(digit[0]);
       const num = Number(value);
       if (Number.isInteger(num) && num >= 1 && num <= 4) return num;
       if (Number.isInteger(num) && num >= 0 && num <= 3) return num + 1;
@@ -973,7 +995,7 @@ function wireStaticEvents() {
     };
     const inferType = (row, options, theoryAnswer) => {
       if (mode !== "mixed") return mode;
-      const raw = pickFirst(row.type, row.questiontype, row.kind, row.format).toLowerCase();
+      const raw = pickFromRow(row, "type", "question type", "questiontype", "kind", "format").toLowerCase();
       if (/(theory|short|subjective|open|descriptive|long)/.test(raw)) return "theory";
       if (/(mcq|multiple)/.test(raw)) return "mcq";
       const hasAllOptions = options.every((o) => toText(o));
@@ -981,14 +1003,29 @@ function wireStaticEvents() {
       return "mcq";
     };
     const imported = rows.map((r) => {
-      const options = [r.option1, r.option2, r.option3, r.option4].map(toText);
-      const theoryAnswer = pickFirst(r.theoryanswer, r.shortanswer, r.answer, r.modelanswer);
+      const options = [
+        pickFromRow(r, "option1", "option 1", "opt1", "a"),
+        pickFromRow(r, "option2", "option 2", "opt2", "b"),
+        pickFromRow(r, "option3", "option 3", "opt3", "c"),
+        pickFromRow(r, "option4", "option 4", "opt4", "d"),
+      ].map(toText);
+      const theoryAnswer = pickFromRow(r, "theoryanswer", "theory answer", "shortanswer", "short answer", "answer", "modelanswer", "model answer");
       const type = inferType(r, options, theoryAnswer);
       return normalizeQuestion({
         type,
-        promptHtml: pickFirst(r.prompt, r.question, r.questiontext, r.text),
+        promptHtml: pickFromRow(r, "prompt", "question", "question text", "questiontext", "text"),
         options,
-        correctIndex: parseCorrectIndex(pickFirst(r.correctindex, r.correct, r.correctoption), options),
+        correctIndex: parseCorrectIndex(pickFromRow(
+          r,
+          "correctindex",
+          "correct index",
+          "correct",
+          "correctoption",
+          "correct option",
+          "answerkey",
+          "answer key",
+          "answer",
+        ), options),
         theoryAnswer,
       });
     }).filter((q) => {

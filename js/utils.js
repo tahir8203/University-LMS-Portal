@@ -17,12 +17,47 @@ export function studentKey(rollNo, name) {
 }
 
 export function parseCSV(text) {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return [];
-  const [header, ...rows] = lines;
-  const cols = header.split(",").map((v) => v.trim().toLowerCase());
-  return rows.map((row) => {
-    const vals = row.split(",").map((v) => v.trim());
+  const input = String(text ?? "").replace(/^\uFEFF/, "");
+  if (!input.trim()) return [];
+
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (ch === '"') {
+      if (inQuotes && input[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      row.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    if ((ch === "\n" || ch === "\r") && !inQuotes) {
+      if (ch === "\r" && input[i + 1] === "\n") i += 1;
+      row.push(cell.trim());
+      cell = "";
+      if (row.some((v) => v !== "")) rows.push(row);
+      row = [];
+      continue;
+    }
+    cell += ch;
+  }
+  row.push(cell.trim());
+  if (row.some((v) => v !== "")) rows.push(row);
+  if (!rows.length) return [];
+
+  const [header, ...body] = rows;
+  const cols = header.map((v) => v.trim().toLowerCase());
+  return body.map((vals) => {
     const obj = {};
     cols.forEach((c, i) => {
       obj[c] = vals[i] ?? "";

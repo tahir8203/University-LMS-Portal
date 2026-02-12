@@ -92,6 +92,11 @@
               <button type="submit">Bulk Import Questions (CSV)</button>
             </form>
             <p class="meta">CSV headers: <code>type,prompt,option1,option2,option3,option4,correctIndex(1-4),theoryAnswer</code></p>
+            <div class="inline-actions template-downloads">
+              <a class="button-link" href="./templates/quiz-mcq-template.csv" download>Download MCQ CSV</a>
+              <a class="button-link" href="./templates/quiz-theory-template.csv" download>Download Theory CSV</a>
+              <a class="button-link" href="./templates/quiz-mixed-template.csv" download>Download Mixed CSV</a>
+            </div>
             <textarea id="mcqPasteInput" rows="7" placeholder="Paste full MCQs/theory blocks here..."></textarea>
             <button id="parsePasteBtn" type="button">Parse Pasted Questions</button>
           </details>
