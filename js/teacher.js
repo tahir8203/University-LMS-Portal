@@ -41,6 +41,7 @@ const state = {
   analyticsClassFilter: "",
   reviewClassFilter: "",
   assignmentClassFilter: "",
+  evaluationClassFilter: "",
   lastEnrollCredentials: [],
 };
 
@@ -229,6 +230,15 @@ function renderAssignmentClassFilterControls() {
   if (el) el.innerHTML = `<div class="inline-actions filter-chip-wrap">${html}</div>`;
 }
 
+function renderEvaluationClassFilterControls() {
+  const classes = [{ id: "", name: "All Classes" }, ...state.classes.map((c) => ({ id: c.id, name: c.name || c.id }))];
+  const html = classes
+    .map((row) => `<button type="button" class="filter-chip-btn ${state.evaluationClassFilter === row.id ? "active" : ""}" data-evaluation-class-filter="${row.id}">${escapeHtml(row.name)}</button>`)
+    .join("");
+  const el = qs("#evaluationClassFilters");
+  if (el) el.innerHTML = `<div class="inline-actions filter-chip-wrap">${html}</div>`;
+}
+
 function renderEnrollCredentials() {
   const panel = qs("#enrollCredentialsPanel");
   const list = qs("#enrollCredentialsList");
@@ -290,6 +300,7 @@ function fillClassSelects() {
     .join("");
   renderQuizClassFilterControls();
   renderAssignmentClassFilterControls();
+  renderEvaluationClassFilterControls();
 }
 
 async function refreshData() {
@@ -868,7 +879,9 @@ async function renderEvaluationStats() {
     });
   });
 
-  qs("#evaluationStatsList").innerHTML = state.evalStats
+  renderEvaluationClassFilterControls();
+  const filteredStats = state.evalStats.filter((s) => !state.evaluationClassFilter || s.classId === state.evaluationClassFilter);
+  qs("#evaluationStatsList").innerHTML = filteredStats
     .map((s) => {
       const className = state.classes.find((c) => c.id === s.classId)?.name || s.classId;
       const qEntries = Object.entries(s.questionTotals || {}).map(([k, v]) => `${k}: ${(v / (s.count || 1)).toFixed(2)}`);
@@ -886,7 +899,7 @@ async function renderEvaluationStats() {
         <div>${entries || "<p class='meta'>No evaluations yet.</p>"}</div>
       </article>`;
     })
-    .join("") || "<p>No evaluations submitted yet.</p>";
+    .join("") || "<p>No evaluations for selected class.</p>";
 }
 
 async function deleteEvaluationAsTeacher(evaluationId) {
@@ -1442,6 +1455,14 @@ function wireDynamicEvents() {
     btn.addEventListener("click", async () => {
       state.assignmentClassFilter = btn.dataset.assignmentClassFilter || "";
       await renderAssignments();
+      wireDynamicEvents();
+    });
+  });
+
+  qsa("[data-evaluation-class-filter]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      state.evaluationClassFilter = btn.dataset.evaluationClassFilter || "";
+      await renderEvaluationStats();
       wireDynamicEvents();
     });
   });
