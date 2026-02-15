@@ -185,17 +185,17 @@ function attachAntiCheat() {
   const reportViolation = (reason) => {
     if (!quizRuntime) return;
     quizRuntime.violations = Number(quizRuntime.violations || 0) + 1;
-    qs("#quizAntiCheatMsg").textContent = `Anti-cheat warning ${quizRuntime.violations}/3: ${reason}`;
+    qs("#quizAntiCheatMsg").textContent = `Anti-cheat warning ${quizRuntime.violations}/3: ${reason} Switching/turning off screen can stop your quiz.`;
     if (quizRuntime.violations >= 3) {
-      qs("#quizAntiCheatMsg").textContent = "Quiz auto-submitted due to repeated anti-cheat violations.";
-      submitQuiz();
+      qs("#quizAntiCheatMsg").textContent = "Quiz stopped and auto-submitted: repeated screen/tab switching detected.";
+      submitQuiz({ skipConfirm: true, reason: "anti_cheat" });
     }
   };
   antiCheatHandlers = {
     visibility: () => {
-      if (document.visibilityState !== "visible") reportViolation("Tab switch detected.");
+      if (document.visibilityState !== "visible") reportViolation("Screen turned off or tab switched.");
     },
-    blur: () => reportViolation("Window focus lost."),
+    blur: () => reportViolation("Window focus lost (possible app switch)."),
     copy: (e) => {
       e.preventDefault();
       reportViolation("Copy is not allowed during quiz.");
@@ -252,7 +252,7 @@ function startQuiz(quizId) {
       quizRuntime.questionSecondsLeft[quizRuntime.idx] -= 1;
     }
     if (quizRuntime.secondsLeft <= 0) {
-      submitQuiz();
+      submitQuiz({ skipConfirm: true, reason: "timer" });
       return;
     }
     if (quizRuntime.questionSecondsLeft[quizRuntime.idx] === 0 && getQuestionTimerSeconds(quizRuntime.quiz.questions[quizRuntime.idx]) > 0) {
@@ -260,7 +260,7 @@ function startQuiz(quizId) {
         quizRuntime.idx += 1;
         renderQuizAttemptArea();
       } else {
-        submitQuiz();
+        submitQuiz({ skipConfirm: true, reason: "question_timer" });
       }
     } else {
       qs("#quizTimeLeft").textContent = String(quizRuntime.secondsLeft);
@@ -288,6 +288,7 @@ function renderQuizAttemptArea() {
   qs("#quizAttemptArea").innerHTML = `<article class="item">
     <h4>${escapeHtml(quizRuntime.quiz.title)} | Time Left: <span id="quizTimeLeft">${quizRuntime.secondsLeft}</span>s</h4>
     <p id="quizAntiCheatMsg" class="bad"></p>
+    <p class="meta">Warning: If you switch tab/app or turn off/minimize screen repeatedly, quiz can be stopped automatically.</p>
     <p>${getQuestionTimerSeconds(q) > 0 ? `Question Time Left: <span id="questionTimeLeft">${quizRuntime.questionSecondsLeft[quizRuntime.idx]}</span>s` : "No per-question timer"}</p>
     ${q.type !== "theory" && quizRuntime.lockedMcq[quizRuntime.idx] ? "<p class='meta'>Option locked for this question (one-time selection).</p>" : ""}
     <p><strong>Q${quizRuntime.idx + 1}/${quizRuntime.quiz.questions.length}:</strong></p>
@@ -342,9 +343,13 @@ async function updateProgress(classId, delta) {
   return { progressRef, next };
 }
 
-async function submitQuiz() {
+async function submitQuiz({ skipConfirm = false } = {}) {
   if (!quizRuntime || quizRuntime.submitting) return;
   const runtime = quizRuntime;
+  if (!skipConfirm) {
+    const ok = confirm("Are you sure you want to submit this quiz now? You cannot edit answers after submission.");
+    if (!ok) return;
+  }
   runtime.submitting = true;
   const quiz = runtime.quiz;
   const answers = [...runtime.answers];
@@ -420,6 +425,7 @@ async function submitQuiz() {
       totalTheoryPossible,
       totalPossible,
       attemptNo: runtime.attemptNo,
+      submittedAt: { seconds: Math.floor(Date.now() / 1000) },
     }];
     renderQuizzesList();
     qs("#quizAttemptArea").innerHTML = "<p class='ok'>Quiz submitted successfully.</p>";

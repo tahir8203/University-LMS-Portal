@@ -798,6 +798,40 @@ th, td {
   padding: 10px;
 }
 
+.quiz-analytics-toolbar {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.filter-chip-wrap {
+  flex-wrap: wrap;
+}
+
+.filter-chip-btn {
+  width: auto;
+  min-width: 92px;
+  padding: 7px 12px;
+}
+
+.filter-chip-btn.active {
+  background: linear-gradient(135deg, #0d63cb, #0a4a98);
+  border-color: #0a4f9e;
+  color: #fff;
+}
+
+.analytics-card {
+  border-color: #cbdbef;
+  background: linear-gradient(180deg, #ffffff, #f4f9ff);
+}
+
+.analytics-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
 details {
   border: 1px solid #d9e4f2;
   border-radius: 12px;

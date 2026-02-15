@@ -37,6 +37,10 @@ const state = {
   draftDirty: false,
   lastDraftHash: "",
   quizAttemptsReview: [],
+  quizAnalyticsRows: [],
+  analyticsClassFilter: "",
+  reviewClassFilter: "",
+  assignmentClassFilter: "",
   lastEnrollCredentials: [],
 };
 
@@ -123,6 +127,108 @@ function escapeCsvCell(value) {
   return text;
 }
 
+function classNameById(classId) {
+  return state.classes.find((c) => c.id === classId)?.name || classId;
+}
+
+function timestampToText(ts) {
+  return ts ? fmtDate(ts) : "-";
+}
+
+function quizHasTheoryQuestions(quiz) {
+  return !!(quiz?.questions || []).some((q) => q.type === "theory");
+}
+
+function canExportQuizResults(quizId, classId = "") {
+  const quiz = state.quizzes.find((q) => q.id === quizId);
+  if (!quiz) return false;
+  if (!quizHasTheoryQuestions(quiz)) return true;
+  const attempts = state.quizAttemptsReview.filter((a) => a.quizId === quizId && (!classId || a.classId === classId));
+  if (!attempts.length) return true;
+  return attempts.every((a) => !a.theoryPending);
+}
+
+function downloadCsvFile(lines, filename) {
+  const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+}
+
+function exportQuizAttemptsCsv({ classId = "", quizId = "" } = {}) {
+  const attempts = state.quizAttemptsReview
+    .filter((a) => (!classId || a.classId === classId) && (!quizId || a.quizId === quizId))
+    .sort((a, b) => (b.submittedAt?.seconds || 0) - (a.submittedAt?.seconds || 0));
+  if (!attempts.length) {
+    alert("No quiz submissions found for export.");
+    return;
+  }
+
+  const quizzes = new Map(state.quizzes.map((q) => [q.id, q]));
+  const pendingTheory = attempts.filter((a) => {
+    const quiz = quizzes.get(a.quizId);
+    return quizHasTheoryQuestions(quiz) && a.theoryPending;
+  });
+  if (pendingTheory.length) {
+    alert("Theory grading is pending for some submissions. Export after all theory marks are saved.");
+    return;
+  }
+
+  const lines = [
+    "className,quizTitle,quizNumber,studentName,studentRollNo,attemptNo,submittedAt,mcqScore,theoryScore,finalScore,totalPossible,theoryPending",
+    ...attempts.map((a) => {
+      const quiz = quizzes.get(a.quizId);
+      const className = classNameById(a.classId);
+      return [
+        escapeCsvCell(className),
+        escapeCsvCell(quiz?.title || a.quizId),
+        escapeCsvCell(quiz?.quizNumber ?? ""),
+        escapeCsvCell(a.studentName || ""),
+        escapeCsvCell(a.studentRollNo || ""),
+        escapeCsvCell(a.attemptNo ?? ""),
+        escapeCsvCell(timestampToText(a.submittedAt)),
+        escapeCsvCell(Number(a.mcqScore ?? a.score ?? 0)),
+        escapeCsvCell(Number(a.theoryScore || 0)),
+        escapeCsvCell(Number(a.finalScore ?? Number(a.mcqScore ?? a.score ?? 0) + Number(a.theoryScore || 0))),
+        escapeCsvCell(Number(a.totalPossible || a.totalGradable || 0)),
+        escapeCsvCell(a.theoryPending ? "Yes" : "No"),
+      ].join(",");
+    }),
+  ];
+
+  const stamp = new Date().toISOString().replaceAll(":", "-");
+  const classSuffix = classId ? `-${classNameById(classId).replace(/[^a-zA-Z0-9_-]/g, "_")}` : "-all-classes";
+  const quizSuffix = quizId ? `-quiz-${(state.quizzes.find((q) => q.id === quizId)?.quizNumber || quizId)}` : "";
+  downloadCsvFile(lines, `quiz-results${classSuffix}${quizSuffix}-${stamp}.csv`);
+}
+
+function renderQuizClassFilterControls() {
+  const classes = [{ id: "", name: "All Classes" }, ...state.classes.map((c) => ({ id: c.id, name: c.name || c.id }))];
+  const analyticsHtml = classes
+    .map((row) => `<button type="button" class="filter-chip-btn ${state.analyticsClassFilter === row.id ? "active" : ""}" data-quiz-analytics-class="${row.id}">${escapeHtml(row.name)}</button>`)
+    .join("");
+  const reviewHtml = classes
+    .map((row) => `<button type="button" class="filter-chip-btn ${state.reviewClassFilter === row.id ? "active" : ""}" data-quiz-review-class="${row.id}">${escapeHtml(row.name)}</button>`)
+    .join("");
+  const analyticsEl = qs("#quizAnalyticsClassFilters");
+  const reviewEl = qs("#quizAttemptClassFilters");
+  if (analyticsEl) analyticsEl.innerHTML = `<div class="inline-actions filter-chip-wrap">${analyticsHtml}</div>${state.analyticsClassFilter ? `<div><button type="button" data-download-quiz-class-results="${state.analyticsClassFilter}">Download Class Result CSV (Excel)</button></div>` : ""}`;
+  if (reviewEl) reviewEl.innerHTML = `<div class="inline-actions filter-chip-wrap">${reviewHtml}</div>${state.reviewClassFilter ? `<div><button type="button" data-download-quiz-class-results="${state.reviewClassFilter}">Download Class Result CSV (Excel)</button></div>` : ""}`;
+}
+
+function renderAssignmentClassFilterControls() {
+  const classes = [{ id: "", name: "All Classes" }, ...state.classes.map((c) => ({ id: c.id, name: c.name || c.id }))];
+  const html = classes
+    .map((row) => `<button type="button" class="filter-chip-btn ${state.assignmentClassFilter === row.id ? "active" : ""}" data-assignment-class-filter="${row.id}">${escapeHtml(row.name)}</button>`)
+    .join("");
+  const el = qs("#assignmentClassFilters");
+  if (el) el.innerHTML = `<div class="inline-actions filter-chip-wrap">${html}</div>`;
+}
+
 function renderEnrollCredentials() {
   const panel = qs("#enrollCredentialsPanel");
   const list = qs("#enrollCredentialsList");
@@ -182,6 +288,8 @@ function fillClassSelects() {
   qs("#quizPreviewSemester").innerHTML = ['<option value="">Select semester</option>']
     .concat(semesters.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`))
     .join("");
+  renderQuizClassFilterControls();
+  renderAssignmentClassFilterControls();
 }
 
 async function refreshData() {
@@ -212,6 +320,7 @@ async function refreshData() {
   await renderAssignments();
   await renderEvaluationStats();
   await renderQuizAttemptReviews();
+  await renderQuizAnalytics();
   renderAnnouncements();
   wireDynamicEvents();
 }
@@ -592,41 +701,63 @@ function renderQuizDrafts() {
 
 async function renderQuizAnalytics() {
   const snap = await getDocs(query(collection(db, "quizAnalytics"), where("teacherId", "==", state.me.uid)));
-  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  state.quizAnalyticsRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  renderQuizClassFilterControls();
+  const rows = state.quizAnalyticsRows
+    .filter((a) => !state.analyticsClassFilter || a.classId === state.analyticsClassFilter)
+    .sort((a, b) => Number(b.attempts || 0) - Number(a.attempts || 0));
   qs("#quizAnalyticsList").innerHTML = rows
     .map((a) => {
       const quiz = state.quizzes.find((q) => q.id === a.quizId);
-      const className = state.classes.find((c) => c.id === a.classId)?.name || a.classId;
+      const className = classNameById(a.classId);
       const avg = a.attempts ? ((a.totalScore / a.attempts) * 100 / (a.totalGradable || 1)).toFixed(2) : "0.00";
       const questionBreakdown = (a.questionStats || [])
         .map((q, idx) => `Q${idx + 1}: ${q.correct}/${q.total}`)
         .join(" | ");
-      return `<article class="item">
-        <h4>${escapeHtml(quiz?.title || a.quizId)}</h4>
-        <p class="meta">${escapeHtml(className)} | Attempts: ${a.attempts || 0} | Avg MCQ Score: ${avg}%</p>
-        <p>${escapeHtml(questionBreakdown)}</p>
+      const quizAttempts = state.quizAttemptsReview.filter((x) => x.quizId === a.quizId);
+      const pendingTheory = quizAttempts.filter((x) => x.theoryPending).length;
+      const latestSubmit = quizAttempts
+        .slice()
+        .sort((x, y) => (y.submittedAt?.seconds || 0) - (x.submittedAt?.seconds || 0))[0]?.submittedAt;
+      const canExport = canExportQuizResults(a.quizId, a.classId);
+      const quizLabel = quiz?.quizNumber != null ? `Quiz ${quiz.quizNumber}` : "Quiz";
+      return `<article class="item analytics-card">
+        <h4>${escapeHtml(quiz?.title || a.quizId)} <span class="q-type-pill">${escapeHtml(quizLabel)}</span></h4>
+        <p class="meta">${escapeHtml(className)}</p>
+        <div class="analytics-stats">
+          <span class="chip chip-blue">Attempts: ${a.attempts || 0}</span>
+          <span class="chip chip-green">Avg MCQ: ${avg}%</span>
+          <span class="chip chip-amber">Pending Theory: ${pendingTheory}</span>
+          <span class="chip chip-slate">Last Submit: ${timestampToText(latestSubmit)}</span>
+        </div>
+        <p class="meta">Question Breakdown: ${escapeHtml(questionBreakdown || "No breakdown yet")}</p>
+        <div class="inline-actions">
+          <button type="button" data-download-quiz-results="${a.quizId}" ${canExport ? "" : "disabled"}>${canExport ? "Download Result CSV (Excel)" : "Export after theory review"}</button>
+        </div>
       </article>`;
     })
-    .join("") || "<p>No analytics yet.</p>";
+    .join("") || "<p>No analytics found for selected class.</p>";
 }
 
 async function renderQuizAttemptReviews() {
   const snap = await getDocs(query(collection(db, "quizAttempts"), where("teacherId", "==", state.me.uid)));
-  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  state.quizAttemptsReview = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
     .sort((a, b) => (b.submittedAt?.seconds || 0) - (a.submittedAt?.seconds || 0));
-  state.quizAttemptsReview = rows;
+  renderQuizClassFilterControls();
+  const rows = state.quizAttemptsReview.filter((a) => !state.reviewClassFilter || a.classId === state.reviewClassFilter);
   qs("#quizAttemptReviewsList").innerHTML = rows.map((a) => {
     const quiz = state.quizzes.find((q) => q.id === a.quizId);
     const theoryQuestions = (quiz?.questions || [])
       .map((q, i) => ({ q, i }))
       .filter((x) => x.q.type === "theory");
     const title = quiz?.title || a.quizId;
-    const className = state.classes.find((c) => c.id === a.classId)?.name || a.classId;
+    const className = classNameById(a.classId);
     const mcqScore = Number(a.mcqScore ?? a.score ?? 0);
     if (!theoryQuestions.length) {
       return `<article class="item">
         <h4>${escapeHtml(title)}</h4>
         <p class="meta">${escapeHtml(className)} | ${escapeHtml(a.studentName || "Student")} (${escapeHtml(a.studentRollNo || "-")})</p>
+        <p class="meta">Submitted: ${timestampToText(a.submittedAt)}</p>
         <p class="meta">No short questions in this attempt. MCQ score: ${mcqScore}</p>
       </article>`;
     }
@@ -646,13 +777,14 @@ async function renderQuizAttemptReviews() {
     return `<article class="item">
       <h4>${escapeHtml(title)}</h4>
       <p class="meta">${escapeHtml(className)} | ${escapeHtml(a.studentName || "Student")} (${escapeHtml(a.studentRollNo || "-")})</p>
+      <p class="meta">Submitted: ${timestampToText(a.submittedAt)} | Attempt #${Number(a.attemptNo || 1)}</p>
       <p class="meta">MCQ auto: ${mcqScore} | Theory: ${theoryScore} | Final: ${finalScore}</p>
       ${rowsHtml}
       <div class="inline-actions">
         <button data-save-attempt-review="${a.id}" type="button">Save Theory Marks</button>
       </div>
     </article>`;
-  }).join("") || "<p>No quiz attempts yet.</p>";
+  }).join("") || "<p>No quiz attempts for selected class.</p>";
 }
 
 function renderQuizzes() {
@@ -681,7 +813,9 @@ function renderQuizzes() {
 async function renderAssignments() {
   const submissionsSnap = await getDocs(query(collection(db, "assignmentSubmissions"), where("teacherId", "==", state.me.uid)));
   const submissions = submissionsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  qs("#assignmentsList").innerHTML = state.assignments
+  renderAssignmentClassFilterControls();
+  const rows = state.assignments.filter((a) => !state.assignmentClassFilter || a.classId === state.assignmentClassFilter);
+  qs("#assignmentsList").innerHTML = rows
     .map((a) => {
       const className = state.classes.find((c) => c.id === a.classId)?.name || a.classId;
       const subs = submissions.filter((s) => s.assignmentId === a.id);
@@ -704,7 +838,7 @@ async function renderAssignments() {
         <div class="table-wrap"><table><thead><tr><th>Student</th><th>File</th><th>Status</th><th>Grade</th><th>Feedback</th><th>Action</th></tr></thead><tbody>${reviewRows || "<tr><td colspan='6'>No submissions</td></tr>"}</tbody></table></div>
       </article>`;
     })
-    .join("") || "<p>No assignments yet.</p>";
+    .join("") || "<p>No assignments for selected class.</p>";
 }
 
 async function deleteFirestorePayload(fileId) {
@@ -1160,7 +1294,6 @@ function wireStaticEvents() {
       state.lastDraftHash = draftPayloadHash(payload);
     }
     await refreshData();
-    await renderQuizAnalytics();
   });
 
   wireQuizFormAutosave();
@@ -1199,7 +1332,6 @@ function wireStaticEvents() {
     if (draftId) {
       await publishDraft(draftId);
       await refreshData();
-      await renderQuizAnalytics();
       return;
     }
     const classId = qs("#quizClassId").value;
@@ -1208,7 +1340,6 @@ function wireStaticEvents() {
     if (!draft) return alert("No draft found to publish.");
     await publishDraft(draft.id);
     await refreshData();
-    await renderQuizAnalytics();
   });
 
   qs("#deleteCurrentDraftBtn").addEventListener("click", async () => {
@@ -1275,6 +1406,46 @@ function wireStaticEvents() {
 }
 
 function wireDynamicEvents() {
+  qsa("[data-quiz-analytics-class]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      state.analyticsClassFilter = btn.dataset.quizAnalyticsClass || "";
+      renderQuizClassFilterControls();
+      await renderQuizAnalytics();
+      wireDynamicEvents();
+    });
+  });
+
+  qsa("[data-quiz-review-class]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      state.reviewClassFilter = btn.dataset.quizReviewClass || "";
+      renderQuizClassFilterControls();
+      await renderQuizAttemptReviews();
+      wireDynamicEvents();
+    });
+  });
+
+  qsa("[data-download-quiz-results]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const quizId = btn.dataset.downloadQuizResults;
+      exportQuizAttemptsCsv({ quizId });
+    });
+  });
+
+  qsa("[data-download-quiz-class-results]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const classId = btn.dataset.downloadQuizClassResults || "";
+      exportQuizAttemptsCsv({ classId });
+    });
+  });
+
+  qsa("[data-assignment-class-filter]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      state.assignmentClassFilter = btn.dataset.assignmentClassFilter || "";
+      await renderAssignments();
+      wireDynamicEvents();
+    });
+  });
+
   qsa("[data-del-class]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const classId = btn.dataset.delClass;
@@ -1357,7 +1528,6 @@ function wireDynamicEvents() {
     btn.addEventListener("click", async () => {
       await publishDraft(btn.dataset.publishDraft);
       await refreshData();
-      await renderQuizAnalytics();
     });
   });
 
@@ -1404,7 +1574,6 @@ function wireDynamicEvents() {
         updatedAt: serverTimestamp(),
       });
       await refreshData();
-      await renderQuizAnalytics();
     });
   });
 
@@ -1442,7 +1611,6 @@ function wireDynamicEvents() {
       if (!confirm("Delete this quiz?")) return;
       await deleteDoc(doc(db, "quizzes", btn.dataset.delQuiz));
       await refreshData();
-      await renderQuizAnalytics();
       resetQuizEditor();
     });
   });
@@ -1480,6 +1648,7 @@ function wireDynamicEvents() {
         reviewedAt: serverTimestamp(),
       });
       await renderQuizAttemptReviews();
+      await renderQuizAnalytics();
       wireDynamicEvents();
     });
   });
@@ -1562,7 +1731,6 @@ async function boot() {
   wireStaticEvents();
   await initAssignmentCreate();
   await refreshData();
-  await renderQuizAnalytics();
 }
 
 boot().catch((err) => {
