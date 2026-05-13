@@ -143,7 +143,7 @@ function renderQuizzesList() {
   qs("#studentQuizzesList").innerHTML = rows.map((q) => {
     const attempts = state.quizAttempts.filter((a) => a.quizId === q.id);
     const attempt = attempts.sort((a, b) => (b.submittedAt?.seconds || 0) - (a.submittedAt?.seconds || 0))[0];
-    const attemptsUsed = attempts.length;
+    const attemptsUsed = attempts.filter((a) => !a.unlockedAt).length;
     const limitCount = Number(q.attemptLimit || 1);
     
     // Check if the latest attempt is locked
@@ -235,7 +235,8 @@ function detachAntiCheat() {
 function startQuiz(quizId) {
   const quiz = state.quizzes.find((q) => q.id === quizId);
   if (!quiz) return;
-  const attempts = state.quizAttempts.filter((a) => a.quizId === quiz.id).length;
+  const quizAttempts = state.quizAttempts.filter((a) => a.quizId === quiz.id);
+  const attempts = quizAttempts.filter((a) => !a.unlockedAt).length;
   if (!quiz.acceptingAttempts) return alert("Teacher has not started this quiz yet.");
   if (attempts >= Number(quiz.attemptLimit || 1)) return alert("Attempt limit reached.");
   const totalSeconds = Number(quiz.durationMin || 1) * 60;
@@ -383,7 +384,7 @@ async function submitQuiz({ skipConfirm = false } = {}) {
     const batch = writeBatch(db);
     
     // If anti-cheat is enabled, lock the quiz for this student if violations detected
-    const antiCheatTriggered = runtime.antiCheatViolations > 0 || (runtime.focusLost?.count || 0) > 0;
+    const antiCheatTriggered = Number(runtime.violations || 0) > 0;
     const shouldLock = quiz.antiCheatEnabled && antiCheatTriggered;
     
     batch.set(attemptRef, {
@@ -407,8 +408,8 @@ async function submitQuiz({ skipConfirm = false } = {}) {
       antiCheatEnabled: quiz.antiCheatEnabled,
       antiCheatTriggered,
       locked: shouldLock,
-      antiCheatViolationCount: runtime.antiCheatViolations || 0,
-      focusLossCount: runtime.focusLost?.count || 0,
+      antiCheatViolationCount: runtime.violations || 0,
+      focusLossCount: runtime.violations || 0,
     });
     batch.set(progress.progressRef, progress.next, { merge: true });
     await batch.commit();
@@ -442,6 +443,9 @@ async function submitQuiz({ skipConfirm = false } = {}) {
       totalPossible,
       attemptNo: runtime.attemptNo,
       submittedAt: { seconds: Math.floor(Date.now() / 1000) },
+      antiCheatEnabled: quiz.antiCheatEnabled,
+      antiCheatTriggered,
+      locked: shouldLock,
     }];
     renderQuizzesList();
     qs("#quizAttemptArea").innerHTML = "<p class='ok'>Quiz submitted successfully.</p>";

@@ -136,6 +136,16 @@ function timestampToText(ts) {
   return ts ? fmtDate(ts) : "-";
 }
 
+function effectiveQuizAttemptCount(attempts = []) {
+  return attempts.filter((a) => !a.unlockedAt).length;
+}
+
+function canUnlockAttempt(attempt, quiz) {
+  if (!attempt || attempt.unlockedAt) return false;
+  const quizAttempts = state.quizAttemptsReview.filter((a) => a.quizId === attempt.quizId && a.studentKey === attempt.studentKey);
+  return !!attempt.locked || effectiveQuizAttemptCount(quizAttempts) >= Number(quiz?.attemptLimit || 1);
+}
+
 function quizHasTheoryQuestions(quiz) {
   return !!(quiz?.questions || []).some((q) => q.type === "theory");
 }
@@ -740,6 +750,33 @@ async function renderQuizAnalytics() {
       const latestSubmit = quizAttempts
         .slice()
         .sort((x, y) => (y.submittedAt?.seconds || 0) - (x.submittedAt?.seconds || 0))[0]?.submittedAt;
+      const attemptRows = quizAttempts
+        .slice()
+        .sort((x, y) => {
+          const byStudent = String(x.studentName || "").localeCompare(String(y.studentName || ""));
+          if (byStudent) return byStudent;
+          return (y.submittedAt?.seconds || 0) - (x.submittedAt?.seconds || 0);
+        })
+        .map((attempt) => {
+          const isLocked = !!attempt.locked;
+          const unlocked = !!attempt.unlockedAt;
+          const unlockable = canUnlockAttempt(attempt, quiz);
+          const status = unlocked
+            ? `Unlocked ${timestampToText(attempt.unlockedAt)}`
+            : isLocked
+              ? "Locked"
+              : "Submitted";
+          return `<tr>
+            <td>${escapeHtml(attempt.studentName || "Student")}</td>
+            <td>${escapeHtml(attempt.studentRollNo || "-")}</td>
+            <td>${Number(attempt.attemptNo || 1)}</td>
+            <td>${timestampToText(attempt.submittedAt)}</td>
+            <td>${escapeHtml(status)}</td>
+            <td>${attempt.antiCheatTriggered ? "Yes" : "No"}</td>
+            <td>${unlockable ? `<button data-unlock-attempt="${attempt.id}" type="button">Unlock Quiz</button>` : "-"}</td>
+          </tr>`;
+        })
+        .join("");
       const canExport = canExportQuizResults(a.quizId, a.classId);
       const quizLabel = quiz?.quizNumber != null ? `Quiz ${quiz.quizNumber}` : "Quiz";
       return `<article class="item analytics-card">
@@ -754,6 +791,12 @@ async function renderQuizAnalytics() {
         <p class="meta">Question Breakdown: ${escapeHtml(questionBreakdown || "No breakdown yet")}</p>
         <div class="inline-actions">
           <button type="button" data-download-quiz-results="${a.quizId}" ${canExport ? "" : "disabled"}>${canExport ? "Download Result CSV (Excel)" : "Export after theory review"}</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Student</th><th>Roll No</th><th>Attempt</th><th>Submitted</th><th>Status</th><th>Anti-cheat</th><th>Action</th></tr></thead>
+            <tbody>${attemptRows || `<tr><td colspan="7">No student attempts yet.</td></tr>`}</tbody>
+          </table>
         </div>
       </article>`;
     })
@@ -796,7 +839,7 @@ async function renderQuizAttemptReviews() {
     const theoryScore = Number(a.theoryScore || 0);
     const finalScore = Number(a.finalScore ?? (mcqScore + theoryScore));
     const isLocked = a.locked ? ` | 🔒 LOCKED` : "";
-    const unlockBtn = a.locked && a.antiCheatTriggered ? `<button data-unlock-attempt="${a.id}" type="button">🔓 Unlock for Re-attempt</button>` : "";
+    const unlockBtn = canUnlockAttempt(a, quiz) ? `<button data-unlock-attempt="${a.id}" type="button">Unlock Quiz</button>` : "";
     return `<article class="item">
       <h4>${escapeHtml(title)}</h4>
       <p class="meta">${escapeHtml(className)} | ${escapeHtml(a.studentName || "Student")} (${escapeHtml(a.studentRollNo || "-")})</p>
@@ -1739,6 +1782,7 @@ function wireDynamicEvents() {
           locked: false,
           unlockedAt: serverTimestamp(),
           unlockedBy: state.me.uid,
+          unlockReason: attempt.locked ? "locked_attempt" : "extra_attempt_allowed",
         });
         await refreshData();
         alert(`✓ ${attempt.studentName} can now re-attempt this quiz.`);
