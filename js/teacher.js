@@ -955,32 +955,42 @@ function wireQuizFormAutosave() {
 }
 
 async function publishDraft(draftId) {
-  const d = state.quizDrafts.find((x) => x.id === draftId);
-  if (!d) return;
-  validateQuestions((d.questions || []).map(normalizeQuestion), { strict: true });
-  const existing = state.quizzes.find((q) => q.classId === d.classId && Number(q.quizNumber) === Number(d.quizNumber));
-  const payload = {
-    teacherId: state.me.uid,
-    classId: d.classId,
-    quizNumber: d.quizNumber,
-    title: d.title,
-    durationMin: d.durationMin,
-    attemptLimit: d.attemptLimit || 1,
-    antiCheatEnabled: d.antiCheatEnabled !== false,
-    questions: (d.questions || []).map(normalizeQuestion),
-    status: "published",
-    acceptingAttempts: true,
-    startedAt: serverTimestamp(),
-    publishedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
-  if (existing) {
-    await updateDoc(doc(db, "quizzes", existing.id), payload);
-  } else {
-    await addDoc(collection(db, "quizzes"), { ...payload, createdAt: serverTimestamp() });
+  try {
+    const d = state.quizDrafts.find((x) => x.id === draftId);
+    if (!d) {
+      throw new Error("Draft not found.");
+    }
+    validateQuestions((d.questions || []).map(normalizeQuestion), { strict: true });
+    const existing = state.quizzes.find((q) => q.classId === d.classId && Number(q.quizNumber) === Number(d.quizNumber));
+    const payload = {
+      teacherId: state.me.uid,
+      classId: d.classId,
+      quizNumber: d.quizNumber,
+      title: d.title,
+      durationMin: d.durationMin,
+      attemptLimit: d.attemptLimit || 1,
+      antiCheatEnabled: d.antiCheatEnabled !== false,
+      questions: (d.questions || []).map(normalizeQuestion),
+      status: "published",
+      acceptingAttempts: true,
+      startedAt: serverTimestamp(),
+      publishedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+    if (existing) {
+      await updateDoc(doc(db, "quizzes", existing.id), payload);
+    } else {
+      await addDoc(collection(db, "quizzes"), { ...payload, createdAt: serverTimestamp() });
+    }
+    await deleteDoc(doc(db, "quizDrafts", draftId));
+    setDraftStatus("✓ Draft published successfully.");
+  } catch (err) {
+    console.error("Publish draft error:", err);
+    const errorMsg = err.message || err.code || "Unknown error";
+    setDraftStatus(`✗ Publish failed: ${errorMsg}`);
+    alert(`Failed to publish draft: ${errorMsg}\n\nCheck browser console for details.`);
+    throw err;
   }
-  await deleteDoc(doc(db, "quizDrafts", draftId));
-  setDraftStatus("Draft published.");
 }
 
 function resetQuizEditor() {
@@ -1341,18 +1351,31 @@ function wireStaticEvents() {
   });
 
   qs("#publishCurrentDraftBtn").addEventListener("click", async () => {
-    const draftId = qs("#quizDraftId").value;
-    if (draftId) {
-      await publishDraft(draftId);
+    try {
+      const btn = qs("#publishCurrentDraftBtn");
+      btn.disabled = true;
+      btn.textContent = "Publishing...";
+      
+      const draftId = qs("#quizDraftId").value;
+      if (draftId) {
+        await publishDraft(draftId);
+        await refreshData();
+        return;
+      }
+      const classId = qs("#quizClassId").value;
+      const quizNumber = Number(qs("#quizNumber").value);
+      const draft = state.quizDrafts.find((d) => d.classId === classId && Number(d.quizNumber) === quizNumber);
+      if (!draft) throw new Error("No draft found to publish. Save the quiz as a draft first.");
+      await publishDraft(draft.id);
       await refreshData();
-      return;
+    } catch (err) {
+      console.error("Error publishing draft:", err);
+      alert(err.message || "Failed to publish draft. Check console for details.");
+    } finally {
+      const btn = qs("#publishCurrentDraftBtn");
+      btn.disabled = false;
+      btn.textContent = "Publish Draft";
     }
-    const classId = qs("#quizClassId").value;
-    const quizNumber = Number(qs("#quizNumber").value);
-    const draft = state.quizDrafts.find((d) => d.classId === classId && Number(d.quizNumber) === quizNumber);
-    if (!draft) return alert("No draft found to publish.");
-    await publishDraft(draft.id);
-    await refreshData();
   });
 
   qs("#deleteCurrentDraftBtn").addEventListener("click", async () => {
@@ -1547,8 +1570,17 @@ function wireDynamicEvents() {
 
   qsa("[data-publish-draft]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      await publishDraft(btn.dataset.publishDraft);
-      await refreshData();
+      try {
+        btn.disabled = true;
+        btn.textContent = "Publishing...";
+        await publishDraft(btn.dataset.publishDraft);
+        await refreshData();
+      } catch (err) {
+        console.error("Error publishing draft:", err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Publish Draft";
+      }
     });
   });
 
