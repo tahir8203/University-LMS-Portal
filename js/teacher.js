@@ -795,14 +795,17 @@ async function renderQuizAttemptReviews() {
     }).join("");
     const theoryScore = Number(a.theoryScore || 0);
     const finalScore = Number(a.finalScore ?? (mcqScore + theoryScore));
+    const isLocked = a.locked ? ` | 🔒 LOCKED` : "";
+    const unlockBtn = a.locked && a.antiCheatTriggered ? `<button data-unlock-attempt="${a.id}" type="button">🔓 Unlock for Re-attempt</button>` : "";
     return `<article class="item">
       <h4>${escapeHtml(title)}</h4>
       <p class="meta">${escapeHtml(className)} | ${escapeHtml(a.studentName || "Student")} (${escapeHtml(a.studentRollNo || "-")})</p>
-      <p class="meta">Submitted: ${timestampToText(a.submittedAt)} | Attempt #${Number(a.attemptNo || 1)}</p>
+      <p class="meta">Submitted: ${timestampToText(a.submittedAt)} | Attempt #${Number(a.attemptNo || 1)}${isLocked}</p>
       <p class="meta">MCQ auto: ${mcqScore} | Theory: ${theoryScore} | Final: ${finalScore}</p>
       ${rowsHtml}
       <div class="inline-actions">
         <button data-save-attempt-review="${a.id}" type="button">Save Theory Marks</button>
+        ${unlockBtn}
       </div>
     </article>`;
   }).join("") || "<p>No quiz attempts for selected class.</p>";
@@ -1333,10 +1336,30 @@ function wireStaticEvents() {
 
   qs("#saveDraftBtn").addEventListener("click", async () => {
     try {
+      const btn = qs("#saveDraftBtn");
+      btn.disabled = true;
+      const originalText = btn.textContent;
+      btn.textContent = "Saving...";
+      
       validateQuestions(state.quizQuestions.map(normalizeQuestion), { strict: false });
       const ok = await autosaveDraft();
-      if (!ok) alert("Draft was not saved. Select class/quiz and add questions first.");
+      if (ok) {
+        const msg = `✓ Draft saved successfully at ${new Date().toLocaleTimeString()}`;
+        setDraftStatus(msg);
+        btn.classList.add("btn-success");
+        setTimeout(() => {
+          btn.classList.remove("btn-success");
+          btn.textContent = originalText;
+          btn.disabled = false;
+        }, 2000);
+      } else {
+        btn.textContent = originalText;
+        btn.disabled = false;
+        alert("Draft was not saved. Select class/quiz and add questions first.");
+      }
     } catch (err) {
+      qs("#saveDraftBtn").disabled = false;
+      qs("#saveDraftBtn").textContent = "Save Draft";
       alert(err.message || "Draft save failed.");
     }
   });
@@ -1362,22 +1385,33 @@ function wireStaticEvents() {
 
   qs("#publishCurrentDraftBtn").addEventListener("click", async () => {
     try {
+      const draftId = qs("#quizDraftId").value;
+      let targetDraftId = draftId;
+      
+      if (!draftId) {
+        const classId = qs("#quizClassId").value;
+        const quizNumber = Number(qs("#quizNumber").value);
+        const draft = state.quizDrafts.find((d) => d.classId === classId && Number(d.quizNumber) === quizNumber);
+        if (!draft) throw new Error("No draft found to publish. Save the quiz as a draft first.");
+        targetDraftId = draft.id;
+      }
+      
+      const confirmed = confirm(
+        "Are you sure you want to publish this quiz?\n\n" +
+        "Once published, students will be able to attempt it.\n" +
+        "You can still edit it after publishing."
+      );
+      
+      if (!confirmed) return;
+      
       const btn = qs("#publishCurrentDraftBtn");
       btn.disabled = true;
       btn.textContent = "Publishing...";
       
-      const draftId = qs("#quizDraftId").value;
-      if (draftId) {
-        await publishDraft(draftId);
-        await refreshData();
-        return;
-      }
-      const classId = qs("#quizClassId").value;
-      const quizNumber = Number(qs("#quizNumber").value);
-      const draft = state.quizDrafts.find((d) => d.classId === classId && Number(d.quizNumber) === quizNumber);
-      if (!draft) throw new Error("No draft found to publish. Save the quiz as a draft first.");
-      await publishDraft(draft.id);
+      await publishDraft(targetDraftId);
       await refreshData();
+      
+      alert("✓ Quiz published successfully!");
     } catch (err) {
       console.error("Error publishing draft:", err);
       alert(err.message || "Failed to publish draft. Check console for details.");
@@ -1580,13 +1614,21 @@ function wireDynamicEvents() {
 
   qsa("[data-publish-draft]").forEach((btn) => {
     btn.addEventListener("click", async () => {
+      const confirmed = confirm(
+        "Are you sure you want to publish this quiz?\n\n" +
+        "Once published, students will be able to attempt it."
+      );
+      if (!confirmed) return;
+      
       try {
         btn.disabled = true;
         btn.textContent = "Publishing...";
         await publishDraft(btn.dataset.publishDraft);
         await refreshData();
+        alert("✓ Quiz published successfully!");
       } catch (err) {
         console.error("Error publishing draft:", err);
+        alert(err.message || "Failed to publish quiz.");
       } finally {
         btn.disabled = false;
         btn.textContent = "Publish Draft";
@@ -1675,6 +1717,37 @@ function wireDynamicEvents() {
       await deleteDoc(doc(db, "quizzes", btn.dataset.delQuiz));
       await refreshData();
       resetQuizEditor();
+    });
+  });
+
+  qsa("[data-unlock-attempt]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const attemptId = btn.dataset.unlockAttempt;
+      const attempt = state.quizAttemptsReview.find((a) => a.id === attemptId);
+      if (!attempt) return alert("Attempt not found.");
+      
+      const confirmed = confirm(
+        `Unlock ${attempt.studentName} (${attempt.studentRollNo}) to re-attempt this quiz?\n\n` +
+        "They will be able to take this quiz again."
+      );
+      if (!confirmed) return;
+      
+      try {
+        btn.disabled = true;
+        btn.textContent = "Unlocking...";
+        await updateDoc(doc(db, "quizAttempts", attemptId), {
+          locked: false,
+          unlockedAt: serverTimestamp(),
+          unlockedBy: state.me.uid,
+        });
+        await refreshData();
+        alert(`✓ ${attempt.studentName} can now re-attempt this quiz.`);
+      } catch (err) {
+        console.error("Unlock error:", err);
+        alert(`Failed to unlock: ${err.message}`);
+        btn.disabled = false;
+        btn.textContent = "🔓 Unlock for Re-attempt";
+      }
     });
   });
 

@@ -97,7 +97,10 @@ service cloud.firestore {
         && request.resource.data.answers is list;
       allow update: if isTeacher()
         && resource.data.teacherId == request.auth.uid
-        && request.resource.data.teacherId == resource.data.teacherId;
+        && (
+          (request.resource.data.teacherId == resource.data.teacherId && request.resource.data.locked == resource.data.locked)
+          || (request.resource.data.locked is bool && request.resource.data.unlockedBy is string)
+        );
       allow delete: if false;
     }
 

@@ -145,13 +145,19 @@ function renderQuizzesList() {
     const attempt = attempts.sort((a, b) => (b.submittedAt?.seconds || 0) - (a.submittedAt?.seconds || 0))[0];
     const attemptsUsed = attempts.length;
     const limitCount = Number(q.attemptLimit || 1);
-    const canAttempt = q.acceptingAttempts && attemptsUsed < limitCount;
+    
+    // Check if the latest attempt is locked
+    const isLockedByTeacher = attempt?.locked === true;
+    const canAttempt = q.acceptingAttempts && attemptsUsed < limitCount && !isLockedByTeacher;
+    
     const className = state.classes.find((c) => c.id === q.classId)?.name || q.classId;
+    const lockStatus = isLockedByTeacher ? ` | 🔒 Locked by teacher (contact instructor to unlock)` : "";
+    
     return `<article class="item">
       <h4>${escapeHtml(q.title)} (Quiz ${q.quizNumber})</h4>
-      <p class="meta">${escapeHtml(className)} | Duration: ${q.durationMin} mins | Attempts: ${attemptsUsed}/${limitCount} | ${q.acceptingAttempts ? "Open" : "Stopped by teacher"} | Anti-cheat: ${q.antiCheatEnabled ? "On" : "Off"}</p>
+      <p class="meta">${escapeHtml(className)} | Duration: ${q.durationMin} mins | Attempts: ${attemptsUsed}/${limitCount} | ${q.acceptingAttempts ? "Open" : "Stopped by teacher"}${lockStatus} | Anti-cheat: ${q.antiCheatEnabled ? "On" : "Off"}</p>
       <div class="inline-actions">
-        ${canAttempt ? `<button data-start-quiz="${q.id}" type="button">Attempt Quiz</button>` : `<button type="button" disabled>Attempt Locked</button>`}
+        ${canAttempt ? `<button data-start-quiz="${q.id}" type="button">Attempt Quiz</button>` : `<button type="button" disabled>${isLockedByTeacher ? "Locked - Contact Teacher" : "Attempt Locked"}</button>`}
         ${attempt ? `<button data-view-result="${q.id}" type="button">View Latest Result</button>` : ""}
       </div>
       <div id="result_${q.id}"></div>
@@ -375,6 +381,11 @@ async function submitQuiz({ skipConfirm = false } = {}) {
 
     const progress = await updateProgress(quiz.classId, { points: POINTS.QUIZ_SUBMISSION, quizCount: 1 });
     const batch = writeBatch(db);
+    
+    // If anti-cheat is enabled, lock the quiz for this student if violations detected
+    const antiCheatTriggered = runtime.antiCheatViolations > 0 || (runtime.focusLost?.count || 0) > 0;
+    const shouldLock = quiz.antiCheatEnabled && antiCheatTriggered;
+    
     batch.set(attemptRef, {
       quizId: quiz.id,
       classId: quiz.classId,
@@ -393,6 +404,11 @@ async function submitQuiz({ skipConfirm = false } = {}) {
       totalTheoryPossible,
       totalPossible,
       submittedAt: serverTimestamp(),
+      antiCheatEnabled: quiz.antiCheatEnabled,
+      antiCheatTriggered,
+      locked: shouldLock,
+      antiCheatViolationCount: runtime.antiCheatViolations || 0,
+      focusLossCount: runtime.focusLost?.count || 0,
     });
     batch.set(progress.progressRef, progress.next, { merge: true });
     await batch.commit();
