@@ -529,14 +529,24 @@ function scheduleDraftAutosave() {
 function validateQuestions(questions, { strict = true } = {}) {
   if (!questions.length) throw new Error("Add at least one question.");
   if (!strict) return;
-  for (const q of questions) {
-    if (!String(q.promptHtml || "").trim()) throw new Error("Each question prompt is required.");
+  for (let idx = 0; idx < questions.length; idx++) {
+    const q = questions[idx];
+    if (!String(q.promptHtml || "").trim()) {
+      throw new Error(`Question ${idx + 1} is missing a prompt. Please add a question prompt/text.`);
+    }
     if (q.type === "mcq") {
-      if ((q.options || []).some((o) => !String(o || "").trim())) throw new Error("All MCQ options are required.");
-      if (q.correctIndex < 1 || q.correctIndex > 4) throw new Error("MCQ correct index must be 1-4.");
-      if (Number(q.maxMarks) !== 1) throw new Error("MCQ marks must remain 1.");
+      const emptyOpt = (q.options || []).findIndex((o) => !String(o || "").trim());
+      if (emptyOpt !== -1) {
+        throw new Error(`Question ${idx + 1}, Option ${String.fromCharCode(65 + emptyOpt)} is empty. All MCQ options are required.`);
+      }
+      if (q.correctIndex < 1 || q.correctIndex > 4) {
+        throw new Error(`Question ${idx + 1}: Correct answer must be between A-D.`);
+      }
+      if (Number(q.maxMarks) !== 1) throw new Error(`Question ${idx + 1}: MCQ marks must be 1.`);
     } else {
-      if (!Number.isFinite(Number(q.maxMarks)) || Number(q.maxMarks) < 1) throw new Error("Each short question must have marks >= 1.");
+      if (!Number.isFinite(Number(q.maxMarks)) || Number(q.maxMarks) < 1) {
+        throw new Error(`Question ${idx + 1}: Theory question marks must be >= 1.`);
+      }
     }
   }
 }
